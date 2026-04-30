@@ -159,7 +159,7 @@ async def ocr_page(job_id: str, page: int, refresh: bool = False):
         "stream": True,
         "options": {
             "temperature": 0.0,
-            "num_predict": 8192,
+            "num_predict": 16384,
         },
     }
 
