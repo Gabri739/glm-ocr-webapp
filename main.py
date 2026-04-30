@@ -1,22 +1,41 @@
-"""
-Backend FastAPI per OCR PDF con GLM-OCR via Ollama
-"""
-import os
+import asyncio
 import base64
 import json
-import httpx
-from typing import List, Optional
-from fastapi import FastAPI, File, UploadFile, HTTPException, Request
-from fastapi.responses import JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
+import os
+import shutil
+import uuid
+from pathlib import Path
+
 import fitz  # PyMuPDF
+import httpx
+from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from PIL import Image
-import io
 
-app = FastAPI(title="GLM OCR PDF Converter", version="1.0.0")
+# Configurazione
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "glm-ocr:latest")
+OCR_PROMPT = os.environ.get(
+    "OCR_PROMPT",
+    "Extract all content from this document image and output clean, well-formatted Markdown. "
+    "Preserve headings, paragraphs, lists, and tables (use Markdown table syntax). "
+    "Describe figures concisely in italics. Do not add commentary; return only the Markdown."
+)
 
-# CORS per permettere al frontend di comunicare
+RENDER_DPI = int(os.environ.get("RENDER_DPI", "150"))
+
+# Directory
+BASE_DIR = Path(__file__).parent.resolve()
+JOBS_DIR = BASE_DIR / "jobs"
+STATIC_DIR = BASE_DIR / "static"
+JOBS_DIR.mkdir(exist_ok=True)
+
+# App
+app = FastAPI(title="GLM-OCR WebApp")
+
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -25,200 +44,231 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "glm-ocr:latest")
+# Serve static files
+if STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
-def pdf_to_images(pdf_bytes: bytes, dpi: int = 150) -> List[bytes]:
-    """
-    Converte un PDF in lista di immagini (una per pagina)
-    Restituisce lista di bytes PNG
-    """
-    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    images = []
-
-    for page_num in range(len(doc)):
-        page = doc[page_num]
-
-        # Aumenta la risoluzione per OCR migliore
-        mat = fitz.Matrix(dpi/72, dpi/72)
-        pix = page.get_pixmap(matrix=mat)
-
-        # Converti in PIL Image e poi in bytes PNG
-        img_data = pix.tobytes("png")
-        images.append(img_data)
-
-    doc.close()
-    return images
+def _job_dir(job_id: str) -> Path:
+    safe = "".join(c for c in job_id if c.isalnum() or c in "-_")
+    if safe != job_id or not safe:
+        raise HTTPException(status_code=400, detail="invalid job id")
+    p = JOBS_DIR / safe
+    if not p.exists():
+        raise HTTPException(status_code=404, detail="job not found")
+    return p
 
 
-def image_to_base64(image_bytes: bytes) -> str:
-    """Converte bytes immagine in base64"""
-    return base64.b64encode(image_bytes).decode('utf-8')
+def _render_pdf_to_pngs(pdf_path: Path, out_dir: Path) -> int:
+    doc = fitz.open(pdf_path)
+    try:
+        zoom = RENDER_DPI / 72.0
+        mat = fitz.Matrix(zoom, zoom)
+        for i, page in enumerate(doc, start=1):
+            pix = page.get_pixmap(matrix=mat, alpha=False)
+            pix.save(out_dir / f"page-{i:04d}.png")
+        return doc.page_count
+    finally:
+        doc.close()
 
 
-async def call_glm_ocr(image_base64: str, timeout: int = 300) -> str:
-    """
-    Chiama Ollama con GLM OCR per estrarre markdown dall'immagine
-    """
-    url = f"{OLLAMA_HOST}/api/generate"
+def _save_image_as_page(src: Path, out_dir: Path) -> int:
+    with Image.open(src) as im:
+        im = im.convert("RGB")
+        im.save(out_dir / "page-0001.png", format="PNG")
+    return 1
 
-    # Costruisci il prompt per OCR ottimale
-    prompt = "Estrai tutto il contenuto testuale da questa immagine in formato markdown. \
-Se ci sono tabelle, convertile in markdown tables. \
-Se ci sono formule matematiche, usa LaTeX. \
-Restituisci solo il markdown pulito senza spiegazioni."
 
-    payload = {
-        "model": OLLAMA_MODEL,
-        "prompt": prompt,
-        "images": [image_base64],
-        "stream": False,
-        "options": {
-            "temperature": 0.1,
-            "num_predict": 4096
-        }
-    }
-
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.post(
-                url,
-                json=payload,
-                timeout=timeout
-            )
-            response.raise_for_status()
-            result = response.json()
-            return result.get("response", "")
-        except httpx.TimeoutException:
-            raise HTTPException(status_code=504, detail="Ollama request timed out")
-        except httpx.ConnectError:
-            raise HTTPException(
-                status_code=503,
-                detail=f"Cannot connect to Ollama at {OLLAMA_HOST}. Is Ollama running?"
-            )
-        except httpx.HTTPStatusError as e:
-            error_body = ""
-            try:
-                error_body = e.response.text
-            except:
-                pass
-            raise HTTPException(
-                status_code=500,
-                detail=f"Ollama error {e.response.status_code}: {error_body or str(e)}"
-            )
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Ollama error: {str(e)}")
-
+# =============================================================================
+# API ENDPOINTS
+# =============================================================================
 
 @app.post("/api/upload")
-async def upload_pdf(file: UploadFile = File(...)):
-    """
-    Riceve il PDF, converte in immagini e restituisce preview
-    """
-    if not file.filename.endswith('.pdf'):
-        raise HTTPException(status_code=400, detail="Only PDF files are supported")
+async def upload(file: UploadFile = File(...)):
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="missing filename")
+    suffix = Path(file.filename).suffix.lower()
+    allowed = {".pdf", ".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}
+    if suffix not in allowed:
+        raise HTTPException(status_code=400, detail=f"unsupported file type: {suffix}")
+
+    job_id = uuid.uuid4().hex[:12]
+    job_dir = JOBS_DIR / job_id
+    job_dir.mkdir()
+    src_path = job_dir / f"source{suffix}"
+
+    with src_path.open("wb") as f:
+        shutil.copyfileobj(file.file, f)
 
     try:
-        contents = await file.read()
-        images = pdf_to_images(contents)
-
-        # Converte immagini in base64 per preview
-        image_previews = [image_to_base64(img) for img in images]
-
-        return JSONResponse({
-            "filename": file.filename,
-            "total_pages": len(images),
-            "images": image_previews
-        })
+        if suffix == ".pdf":
+            n_pages = _render_pdf_to_pngs(src_path, job_dir)
+        else:
+            n_pages = _save_image_as_page(src_path, job_dir)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"PDF processing error: {str(e)}")
+        shutil.rmtree(job_dir, ignore_errors=True)
+        raise HTTPException(status_code=500, detail=f"failed to render: {e}")
+
+    meta = {"job_id": job_id, "filename": file.filename, "pages": n_pages}
+    (job_dir / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+    return meta
 
 
-@app.post("/api/ocr/{page_index}")
-async def process_ocr(page_index: int, request: Request):
-    """
-    Processa OCR per una specifica pagina
-    """
-    try:
-        data = await request.json()
-        image_base64 = data.get("image")
-        if not image_base64:
-            raise HTTPException(status_code=400, detail="No image provided")
-
-        markdown = await call_glm_ocr(image_base64)
-
-        return JSONResponse({
-            "page": page_index + 1,
-            "markdown": markdown
-        })
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"OCR error: {str(e)}")
+@app.get("/api/page/{job_id}/{page}")
+async def get_page_image(job_id: str, page: int):
+    job_dir = _job_dir(job_id)
+    img = job_dir / f"page-{page:04d}.png"
+    if not img.exists():
+        raise HTTPException(status_code=404, detail="page not found")
+    return FileResponse(img, media_type="image/png")
 
 
-@app.post("/api/ocr-batch")
-async def process_ocr_batch(request: Request):
-    """
-    Processa OCR per tutte le pagine in batch
-    """
-    try:
-        data = await request.json()
-        images = data.get("images", [])
-        if not images:
-            raise HTTPException(status_code=400, detail="No images provided")
+@app.get("/api/jobs/{job_id}")
+async def get_job(job_id: str):
+    job_dir = _job_dir(job_id)
+    meta_file = job_dir / "meta.json"
+    if not meta_file.exists():
+        raise HTTPException(status_code=404, detail="meta missing")
+    return JSONResponse(content=json.loads(meta_file.read_text(encoding="utf-8")))
 
-        results = []
-        for i, img_base64 in enumerate(images):
-            try:
-                markdown = await call_glm_ocr(img_base64)
-                results.append({
-                    "page": i + 1,
-                    "markdown": markdown,
-                    "status": "success"
-                })
-            except Exception as e:
-                results.append({
-                    "page": i + 1,
-                    "markdown": f"",
-                    "status": "error",
-                    "error": str(e)
-                })
 
-        return JSONResponse({"results": results})
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Batch OCR error: {str(e)}")
+@app.get("/api/ocr/{job_id}/{page}")
+async def ocr_page(job_id: str, page: int, refresh: bool = False):
+    """Run OCR and stream incremental Markdown chunks as text/event-stream."""
+    job_dir = _job_dir(job_id)
+    img_path = job_dir / f"page-{page:04d}.png"
+    if not img_path.exists():
+        raise HTTPException(status_code=404, detail="page not found")
+
+    cache_path = job_dir / f"page-{page:04d}.md"
+    if cache_path.exists() and not refresh:
+        cached = cache_path.read_text(encoding="utf-8")
+
+        async def cached_stream():
+            yield f"event: cached\ndata: {json.dumps({'cached': True})}\n\n"
+            yield f"data: {json.dumps({'chunk': cached})}\n\n"
+            yield f"event: done\ndata: {json.dumps({'ok': True})}\n\n"
+
+        return StreamingResponse(cached_stream(), media_type="text/event-stream")
+
+    img_b64 = base64.b64encode(img_path.read_bytes()).decode("ascii")
+    payload = {
+        "model": OLLAMA_MODEL,
+        "prompt": OCR_PROMPT,
+        "images": [img_b64],
+        "stream": True,
+        "options": {
+            "temperature": 0.0,
+            "num_predict": 8192,
+        },
+    }
+
+    async def gen():
+        collected: list[str] = []
+        try:
+            timeout = httpx.Timeout(connect=10.0, read=600.0, write=60.0, pool=10.0)
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                async with client.stream("POST", f"{OLLAMA_URL}/api/generate", json=payload) as resp:
+                    if resp.status_code != 200:
+                        body = (await resp.aread()).decode("utf-8", errors="replace")
+                        err = {"error": f"Ollama HTTP {resp.status_code}", "body": body[:500]}
+                        yield f"event: error\ndata: {json.dumps(err)}\n\n"
+                        return
+                    async for line in resp.aiter_lines():
+                        if not line:
+                            continue
+                        try:
+                            obj = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        chunk = obj.get("response", "")
+                        if chunk:
+                            collected.append(chunk)
+                            yield f"data: {json.dumps({'chunk': chunk})}\n\n"
+                        if obj.get("done"):
+                            break
+        except httpx.RequestError as e:
+            yield f"event: error\ndata: {json.dumps({'error': f'Connection error: {str(e)}'})}\n\n"
+            return
+        except asyncio.CancelledError:
+            raise
+
+        full = "".join(collected)
+        if full.strip():
+            cache_path.write_text(full, encoding="utf-8")
+        yield f"event: done\ndata: {json.dumps({'ok': True, 'length': len(full)})}\n\n"
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+@app.get("/api/markdown/{job_id}/{page}")
+async def get_markdown(job_id: str, page: int):
+    job_dir = _job_dir(job_id)
+    cache_path = job_dir / f"page-{page:04d}.md"
+    if not cache_path.exists():
+        raise HTTPException(status_code=404, detail="not yet processed")
+    return JSONResponse({"page": page, "markdown": cache_path.read_text(encoding="utf-8")})
+
+
+@app.get("/api/markdown/{job_id}")
+async def get_full_markdown(job_id: str):
+    job_dir = _job_dir(job_id)
+    meta = json.loads((job_dir / "meta.json").read_text(encoding="utf-8"))
+    parts: list[str] = []
+    for i in range(1, meta["pages"] + 1):
+        cache_path = job_dir / f"page-{i:04d}.md"
+        if cache_path.exists():
+            parts.append(f"<!-- Page {i} -->\n\n" + cache_path.read_text(encoding="utf-8"))
+        else:
+            parts.append(f"<!-- Page {i} not processed yet -->")
+    return JSONResponse({"job_id": job_id, "markdown": "\n\n---\n\n".join(parts)})
+
+
+@app.delete("/api/jobs/{job_id}")
+async def delete_job(job_id: str):
+    job_dir = _job_dir(job_id)
+    shutil.rmtree(job_dir, ignore_errors=True)
+    return JSONResponse({"ok": True})
 
 
 @app.get("/api/health")
 async def health_check():
-    """Check se Ollama è raggiungibile"""
+    """Check se Ollama è raggiungibile e glm-ocr disponibile"""
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(f"{OLLAMA_HOST}/api/tags", timeout=5)
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(f"{OLLAMA_URL}/api/tags")
             if response.status_code == 200:
                 models = response.json().get("models", [])
                 has_glm = any("glm-ocr" in m.get("name", "") for m in models)
                 return {
                     "status": "healthy",
                     "ollama_connected": True,
-                    "glm_ocr_available": has_glm
+                    "ollama_url": OLLAMA_URL,
+                    "glm_ocr_available": has_glm,
+                    "model": OLLAMA_MODEL
                 }
-    except:
+    except Exception:
         pass
 
     return {
         "status": "unhealthy",
         "ollama_connected": False,
-        "glm_ocr_available": False
+        "glm_ocr_available": False,
+        "ollama_url": OLLAMA_URL
     }
 
 
-# Serve il frontend statico
-app.mount("/", StaticFiles(directory="static", html=True), name="static")
+# =============================================================================
+# FRONTEND
+# =============================================================================
+
+@app.get("/")
+async def root():
+    """Serve la webapp HTML"""
+    index_path = STATIC_DIR / "index.html"
+    if index_path.exists():
+        return FileResponse(index_path, media_type="text/html")
+    return JSONResponse({"error": "Frontend not found. Static files missing."})
 
 
 if __name__ == "__main__":

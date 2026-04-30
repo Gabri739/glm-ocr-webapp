@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+
+# Jobs data (temporary)
+jobs/
+
+# Claude Code
+.claude/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo

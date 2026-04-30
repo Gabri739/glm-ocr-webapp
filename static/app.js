@@ -1,106 +1,148 @@
-
 /**
- * GLM OCR PDF Converter - Frontend Logic
+ * GLM-OCR WebApp - Frontend Logic
+ * Updated for job-based API with streaming OCR
  */
 
-// Stato dell'applicazione
-const state = {
-    images: [],           // Array di immagini base64
-    markdowns: [],       // Array di markdown per ogni pagina
-    currentPage: 0,      // Pagina corrente (0-indexed)
-    totalPages: 0,       // Numero totale di pagine
-    isProcessing: false, // Stato elaborazione
-    filename: '',        // Nome del file caricato
-    editMode: false      // Modalità edit
-};
-
-// Elementi DOM
-const elements = {
-    fileInput: document.getElementById('fileInput'),
-    status: document.getElementById('status'),
-    progressBar: document.getElementById('progressBar'),
-    pdfPanel: document.getElementById('pdfPanel'),
-    markdownPanel: document.getElementById('markdownPanel'),
-    pageNav: document.getElementById('pageNav'),
-    pageInfo: document.getElementById('pageInfo'),
-    prevPage: document.getElementById('prevPage'),
-    nextPage: document.getElementById('nextPage'),
-    processAll: document.getElementById('processAll'),
-    exportBtn: document.getElementById('exportBtn'),
-    exportDropdown: document.getElementById('exportDropdown'),
-    editToggle: document.getElementById('editToggle'),
-    ocrStatus: document.getElementById('ocrStatus')
-};
-
-// API Endpoints
 const API_BASE = window.location.origin;
 
-// Inizializzazione
+// State Management
+const state = {
+    jobId: null,
+    filename: '',
+    totalPages: 0,
+    currentPage: 1,  // 1-indexed
+    results: {},     // { pageNum: { status, markdown, error } }
+    isProcessing: false,
+    isRawView: false
+};
+
+// DOM Elements
+const elements = {
+    fileInput: document.getElementById('fileInput'),
+    uploadBtn: document.getElementById('uploadBtn'),
+    processAllBtn: document.getElementById('processAllBtn'),
+    downloadBtn: document.getElementById('downloadBtn'),
+    clearBtn: document.getElementById('clearBtn'),
+    statusBadge: document.getElementById('statusBadge'),
+    settingsBtn: document.getElementById('settingsBtn'),
+
+    uploadScreen: document.getElementById('uploadScreen'),
+    dropZone: document.getElementById('dropZone'),
+
+    mainView: document.getElementById('mainView'),
+
+    thumbnailsContainer: document.getElementById('thumbnailsContainer'),
+    currentPageImg: document.getElementById('currentPageImg'),
+    pageCounter: document.getElementById('pageCounter'),
+    prevPageBtn: document.getElementById('prevPageBtn'),
+    nextPageBtn: document.getElementById('nextPageBtn'),
+
+    ocrStatus: document.getElementById('ocrStatus'),
+    markdownBody: document.getElementById('markdownBody'),
+    rawEditor: document.getElementById('rawEditor'),
+    toggleViewBtn: document.getElementById('toggleViewBtn'),
+    copyBtn: document.getElementById('copyBtn'),
+    processPageBtn: document.getElementById('processPageBtn'),
+
+    settingsModal: document.getElementById('settingsModal'),
+    closeSettingsBtn: document.getElementById('closeSettingsBtn'),
+    promptEditor: document.getElementById('promptEditor'),
+    savePromptBtn: document.getElementById('savePromptBtn'),
+    resetPromptBtn: document.getElementById('resetPromptBtn'),
+
+    progressBar: document.getElementById('progressBar'),
+    loadingOverlay: document.getElementById('loadingOverlay'),
+    loadingText: document.getElementById('loadingText')
+};
+
+// Initialize
 document.addEventListener('DOMContentLoaded', () => {
     setupEventListeners();
     checkHealth();
+    setInterval(checkHealth, 30000);
 });
 
 function setupEventListeners() {
-    // Upload file
-    elements.fileInput.addEventListener('change', handleFileUpload);
+    // Upload
+    elements.uploadBtn.addEventListener('click', () => elements.fileInput.click());
+    elements.fileInput.addEventListener('change', handleFileSelect);
 
-    // Navigazione pagine
-    elements.prevPage.addEventListener('click', () => navigatePage(-1));
-    elements.nextPage.addEventListener('click', () => navigatePage(1));
+    // Drag & Drop
+    elements.dropZone.addEventListener('dragover', handleDragOver);
+    elements.dropZone.addEventListener('dragleave', handleDragLeave);
+    elements.dropZone.addEventListener('drop', handleDrop);
+    elements.dropZone.addEventListener('click', () => elements.fileInput.click());
 
-    // Elaborazione
-    elements.processAll.addEventListener('click', processAllPages);
+    // Navigation
+    elements.prevPageBtn.addEventListener('click', () => navigatePage(-1));
+    elements.nextPageBtn.addEventListener('click', () => navigatePage(1));
 
-    // Export
-    elements.exportBtn.addEventListener('click', toggleExportMenu);
-    document.querySelectorAll('.export-item').forEach(item => {
-        item.addEventListener('click', (e) => exportFile(e.target.dataset.format));
+    // OCR
+    elements.processAllBtn.addEventListener('click', processAllPages);
+    elements.processPageBtn.addEventListener('click', processCurrentPage);
+
+    // View
+    elements.toggleViewBtn.addEventListener('click', toggleRawView);
+    elements.copyBtn.addEventListener('click', copyToClipboard);
+
+    // Export & Clear
+    elements.downloadBtn.addEventListener('click', downloadMarkdown);
+    elements.clearBtn.addEventListener('click', clearAll);
+
+    // Settings Modal
+    elements.settingsBtn.addEventListener('click', () => {
+        elements.settingsModal.style.display = 'flex';
     });
-
-    // Chiudi menu export cliccando fuori
-    document.addEventListener('click', (e) => {
-        if (!e.target.closest('.export-menu')) {
-            elements.exportDropdown.classList.remove('show');
+    elements.closeSettingsBtn.addEventListener('click', () => {
+        elements.settingsModal.style.display = 'none';
+    });
+    elements.settingsModal.addEventListener('click', (e) => {
+        if (e.target === elements.settingsModal) {
+            elements.settingsModal.style.display = 'none';
         }
     });
 
-    // Toggle edit mode
-    elements.editToggle.addEventListener('click', toggleEditMode);
-
-    // Tastiera
+    // Keyboard
     document.addEventListener('keydown', handleKeyboard);
 }
 
-// Controlla se Ollama è disponibile
-async function checkHealth() {
-    try {
-        const response = await fetch(`${API_BASE}/api/health`);
-        const data = await response.json();
+// Drag & Drop
+function handleDragOver(e) {
+    e.preventDefault();
+    elements.dropZone.classList.add('dragover');
+}
 
-        if (!data.ollama_connected) {
-            setStatus('⚠️ Ollama non raggiungibile su localhost:11434', 'error');
-        } else if (!data.glm_ocr_available) {
-            setStatus('⚠️ Modello glm-ocr non trovato. Esegui: ollama pull glm-ocr', 'error');
-        } else {
-            setStatus('Pronto - Ollama connesso', 'success');
-        }
-    } catch (e) {
-        setStatus('⚠️ Backend non raggiungibile', 'error');
+function handleDragLeave(e) {
+    e.preventDefault();
+    elements.dropZone.classList.remove('dragover');
+}
+
+function handleDrop(e) {
+    e.preventDefault();
+    elements.dropZone.classList.remove('dragover');
+    if (e.dataTransfer.files.length > 0) {
+        handleFile(e.dataTransfer.files[0]);
     }
 }
 
-// Gestione upload file
-async function handleFileUpload(e) {
-    const file = e.target.files[0];
-    if (!file || !file.name.endsWith('.pdf')) {
-        setStatus('Seleziona un file PDF valido', 'error');
+function handleFileSelect(e) {
+    if (e.target.files.length > 0) {
+        handleFile(e.target.files[0]);
+    }
+}
+
+// Upload file
+async function handleFile(file) {
+    const allowed = ['.pdf', '.png', '.jpg', '.jpeg', '.tiff', '.tif', '.bmp', '.gif', '.webp'];
+    const ext = '.' + file.name.split('.').pop().toLowerCase();
+
+    if (!allowed.includes(ext)) {
+        showToast('Formato non supportato', 'error');
         return;
     }
 
-    state.filename = file.name.replace('.pdf', '');
-    setStatus('Caricamento...', 'processing');
-    showProgress(10);
+    showLoading('Caricamento documento...');
+    state.filename = file.name.replace(/\.[^/.]+$/, '');
 
     const formData = new FormData();
     formData.append('file', file);
@@ -112,254 +154,484 @@ async function handleFileUpload(e) {
         });
 
         if (!response.ok) {
-            throw new Error(`Errore ${response.status}`);
+            const err = await response.json();
+            throw new Error(err.detail || 'Upload failed');
         }
 
         const data = await response.json();
 
-        // Inizializza stato
-        state.images = data.images;
-        state.totalPages = data.total_pages;
-        state.currentPage = 0;
-        state.markdowns = new Array(state.totalPages).fill('');
+        // Initialize state
+        state.jobId = data.job_id;
+        state.totalPages = data.pages;
+        state.currentPage = 1;
+        state.results = {};
 
-        showProgress(100);
-        setStatus(`PDF caricato: ${state.totalPages} pagine`, 'success');
+        // Show main view
+        showMainView();
+        renderThumbnails();
+        showPage(1);
+        updateProgress();
 
-        // Abilita controlli
-        elements.pageNav.style.display = 'flex';
-        elements.processAll.disabled = false;
-        elements.exportBtn.disabled = false;
-        elements.editToggle.style.display = 'inline-block';
-
-        // Mostra prima pagina
-        renderPDFPage(0);
-        renderMarkdownPanel(0);
-        updatePageInfo();
+        showToast(`Documento caricato: ${data.pages} pagine`, 'success');
 
     } catch (error) {
-        console.error('Upload error:', error);
-        setStatus(`Errore caricamento: ${error.message}`, 'error');
-        showProgress(0);
+        showToast(error.message, 'error');
+    } finally {
+        hideLoading();
     }
 }
 
-// Render pagina PDF
-function renderPDFPage(index) {
-    if (index < 0 || index >= state.totalPages) return;
-
-    const imgData = state.images[index];
-
-    elements.pdfPanel.innerHTML = `
-        <div class="pdf-container">
-            <div class="pdf-page" style="position: relative;">
-                <img src="data:image/png;base64,${imgData}" alt="Pagina ${index + 1}">
-                <span class="page-number">Pagina ${index + 1}</span>
-            </div>
-        </div>
-    `;
+// View Management
+function showMainView() {
+    elements.uploadScreen.style.display = 'none';
+    elements.mainView.style.display = 'flex';
+    elements.clearBtn.style.display = 'inline-flex';
+    elements.processAllBtn.disabled = false;
 }
 
-// Render pannello markdown
-function renderMarkdownPanel(index) {
-    const markdown = state.markdowns[index];
+function showUploadView() {
+    elements.uploadScreen.style.display = 'flex';
+    elements.mainView.style.display = 'none';
+    elements.clearBtn.style.display = 'none';
+}
 
-    if (state.editMode) {
-        // Modalità edit
-        elements.markdownPanel.innerHTML = `
-            <textarea class="markdown-editor" data-page="${index}"
-                placeholder="Inserisci markdown...">${markdown || ''}</textarea>
-        `;
+// Thumbnails
+function renderThumbnails() {
+    elements.thumbnailsContainer.innerHTML = '';
 
-        const textarea = elements.markdownPanel.querySelector('.markdown-editor');
-        textarea.addEventListener('input', (e) => {
-            state.markdowns[index] = e.target.value;
-        });
-        textarea.focus();
-    } else {
-        // Modalità preview
-        if (markdown) {
-            const html = marked.parse(markdown);
-            elements.markdownPanel.innerHTML = `<div class="markdown-content">${html}</div>`;
-        } else {
-            elements.markdownPanel.innerHTML = `
-                <div class="empty-state">
-                    <svg class="empty-state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                        <circle cx="12" cy="12" r="10"></circle>
-                        <line x1="12" y1="8" x2="12" y2="12"></line>
-                        <line x1="12" y1="16" x2="12.01" y2="16"></line>
-                    </svg>
-                    <h3>Pagina non ancora elaborata</h3>
-                    <p>Clicca "Processa tutto" o attendi l'elaborazione automatica.</p>
-                </div>
-            `;
-        }
+    for (let i = 1; i <= state.totalPages; i++) {
+        const thumbnail = document.createElement('div');
+        thumbnail.className = `thumbnail ${state.results[i]?.status || 'pending'}`;
+        thumbnail.dataset.page = i;
+
+        const img = document.createElement('img');
+        img.src = `${API_BASE}/api/page/${state.jobId}/${i}`;
+        img.alt = `Pagina ${i}`;
+
+        thumbnail.appendChild(img);
+        thumbnail.addEventListener('click', () => showPage(i));
+
+        elements.thumbnailsContainer.appendChild(thumbnail);
     }
 }
 
-// Navigazione pagine
+// Page Navigation
+function showPage(pageNum) {
+    if (pageNum < 1 || pageNum > state.totalPages) return;
+
+    state.currentPage = pageNum;
+
+    // Update main image
+    elements.currentPageImg.src = `${API_BASE}/api/page/${state.jobId}/${pageNum}`;
+
+    // Update thumbnails
+    document.querySelectorAll('.thumbnail').forEach((thumb, i) => {
+        thumb.classList.toggle('active', i + 1 === pageNum);
+    });
+
+    // Update page counter
+    elements.pageCounter.textContent = `Pagina ${pageNum} di ${state.totalPages}`;
+
+    // Update navigation buttons
+    elements.prevPageBtn.disabled = pageNum === 1;
+    elements.nextPageBtn.disabled = pageNum === state.totalPages;
+
+    // Update OCR display
+    updateOCRDisplay(pageNum);
+}
+
 function navigatePage(direction) {
-    const newPage = state.currentPage + direction;
-    if (newPage >= 0 && newPage < state.totalPages) {
-        state.currentPage = newPage;
-        renderPDFPage(newPage);
-        renderMarkdownPanel(newPage);
-        updatePageInfo();
+    showPage(state.currentPage + direction);
+}
+
+// OCR Display
+function updateOCRDisplay(pageNum) {
+    const result = state.results[pageNum];
+
+    if (!result) {
+        // No result yet
+        updateOCRStatus('pending');
+        elements.markdownBody.innerHTML = `<div class="empty-state">
+            <svg class="empty-state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="8" x2="12" y2="12"></line>
+                <line x1="12" y1="16" x2="12.01" y2="16"></line>
+            </svg>
+            <h3>Pagina non elaborata</h3>
+            <p>Clicca "OCR" per elaborare questa pagina</p>
+        </div>`;
+        elements.processPageBtn.innerHTML = `
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polygon points="5 3 19 12 5 21 5 3"></polygon>
+            </svg>
+            OCR
+        `;
+        elements.processPageBtn.disabled = false;
+        return;
+    }
+
+    updateOCRStatus(result.status, result.error);
+
+    if (result.status === 'completed' && result.markdown) {
+        if (state.isRawView) {
+            elements.markdownBody.style.display = 'none';
+            elements.rawEditor.style.display = 'block';
+            elements.rawEditor.value = result.markdown;
+        } else {
+            elements.rawEditor.style.display = 'none';
+            elements.markdownBody.style.display = 'block';
+            elements.markdownBody.innerHTML = marked.parse(result.markdown);
+        }
+        elements.downloadBtn.disabled = false;
+
+        elements.processPageBtn.innerHTML = `
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M23 4v6h-6"></path>
+                <path d="M1 20v-6h6"></path>
+                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+            </svg>
+            Re-OCR
+        `;
+    } else if (result.status === 'error') {
+        elements.markdownBody.innerHTML = `<div class="empty-state">
+            <p style="color: var(--accent-red);">Errore: ${result.error}</p>
+        </div>`;
+    }
+
+    elements.processPageBtn.disabled = result.status === 'processing';
+}
+
+function updateOCRStatus(status, error = '') {
+    const statusEl = elements.ocrStatus;
+    statusEl.className = 'ocr-status';
+
+    switch (status) {
+        case 'pending':
+            statusEl.innerHTML = '<span class="status-text">In attesa</span>';
+            break;
+        case 'processing':
+            statusEl.className += ' processing';
+            statusEl.innerHTML = `
+                <div class="loading-spinner" style="width: 16px; height: 16px; border-width: 2px;"></div>
+                <span class="status-text">Elaborazione in corso...</span>
+            `;
+            break;
+        case 'completed':
+            statusEl.className += ' completed';
+            statusEl.innerHTML = `
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+                <span class="status-text">Completato</span>
+            `;
+            break;
+        case 'error':
+            statusEl.className += ' error';
+            statusEl.innerHTML = `
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="15" y1="9" x2="9" y2="15"></line>
+                    <line x1="9" y1="9" x2="15" y2="15"></line>
+                </svg>
+                <span class="status-text">Errore: ${error}</span>
+            `;
+            break;
     }
 }
 
-function updatePageInfo() {
-    elements.pageInfo.textContent = `Pagina ${state.currentPage + 1}/${state.totalPages}`;
-    elements.prevPage.disabled = state.currentPage === 0;
-    elements.nextPage.disabled = state.currentPage === state.totalPages - 1;
-}
+// OCR Processing with SSE Streaming
+async function processPage(pageNum, forceRefresh = false) {
+    const current = state.results[pageNum];
+    if (current?.status === 'processing') return;
 
-// Toggle edit mode
-function toggleEditMode() {
-    state.editMode = !state.editMode;
-    elements.editToggle.textContent = state.editMode ? 'Anteprima' : 'Modifica';
-    renderMarkdownPanel(state.currentPage);
-}
-
-// Processa tutte le pagine
-async function processAllPages() {
-    if (state.isProcessing || state.totalPages === 0) return;
-
-    state.isProcessing = true;
-    elements.processAll.disabled = true;
-    setStatus('Elaborazione OCR in corso...', 'processing');
-
-    // Processa pagine in sequenza con batch di 3 per non sovraccaricare
-    const BATCH_SIZE = 3;
-
-    for (let i = 0; i < state.totalPages; i += BATCH_SIZE) {
-        const batch = [];
-        for (let j = i; j < Math.min(i + BATCH_SIZE, state.totalPages); j++) {
-            batch.push(processPageOCR(j));
-        }
-
-        await Promise.all(batch);
-
-        // Aggiorna progresso
-        const progress = ((i + batch.length) / state.totalPages) * 100;
-        showProgress(progress);
-
-        // Se la pagina corrente è stata elaborata, aggiorna la view
-        if (i <= state.currentPage && state.currentPage < i + BATCH_SIZE) {
-            renderMarkdownPanel(state.currentPage);
-        }
-    }
-
-    showProgress(100);
-    state.isProcessing = false;
-    elements.processAll.disabled = false;
-    setStatus(`OCR completato per ${state.totalPages} pagine`, 'success');
-
-    // Torna alla prima pagina per revisione
-    state.currentPage = 0;
-    renderPDFPage(0);
-    renderMarkdownPanel(0);
-    updatePageInfo();
-}
-
-// Processa singola pagina OCR
-async function processPageOCR(pageIndex) {
-    const imgData = state.images[pageIndex];
+    // Set processing state
+    state.results[pageNum] = { status: 'processing', markdown: '', error: '' };
+    updateOCRDisplay(pageNum);
+    updateThumbnailStatus(pageNum);
 
     try {
-        setOCRStatus(true, `Elaborazione pagina ${pageIndex + 1}...`);
+        const url = `${API_BASE}/api/ocr/${state.jobId}/${pageNum}${forceRefresh ? '?refresh=true' : ''}`;
+        const eventSource = new EventSource(url);
 
-        const response = await fetch(`${API_BASE}/api/ocr/${pageIndex}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ image: imgData })
+        let markdown = '';
+
+        eventSource.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                if (data.chunk) {
+                    markdown += data.chunk;
+                    // Update display in real-time
+                    state.results[pageNum] = { status: 'processing', markdown, error: '' };
+                    if (pageNum === state.currentPage) {
+                        if (state.isRawView) {
+                            elements.rawEditor.value = markdown;
+                        } else {
+                            elements.markdownBody.innerHTML = marked.parse(markdown);
+                        }
+                    }
+                }
+            } catch (e) {
+                // Ignore parse errors
+            }
+        };
+
+        eventSource.addEventListener('done', (event) => {
+            eventSource.close();
+            state.results[pageNum] = { status: 'completed', markdown, error: '' };
+            updateOCRDisplay(pageNum);
+            updateThumbnailStatus(pageNum);
+            updateProgress();
         });
 
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`);
-        }
+        eventSource.addEventListener('error', (event) => {
+            eventSource.close();
+            try {
+                const data = JSON.parse(event.data);
+                state.results[pageNum] = { status: 'error', markdown: '', error: data.error || 'Unknown error' };
+            } catch (e) {
+                state.results[pageNum] = { status: 'error', markdown: '', error: 'Connection error' };
+            }
+            updateOCRDisplay(pageNum);
+            updateThumbnailStatus(pageNum);
+        });
 
-        const data = await response.json();
-        state.markdowns[pageIndex] = data.markdown;
-
-        setOCRStatus(false, 'Completato');
+        eventSource.onerror = () => {
+            eventSource.close();
+            state.results[pageNum] = { status: 'error', markdown: '', error: 'Connection failed' };
+            updateOCRDisplay(pageNum);
+            updateThumbnailStatus(pageNum);
+        };
 
     } catch (error) {
-        console.error(`OCR error for page ${pageIndex + 1}:`, error);
-        state.markdowns[pageIndex] = `*Errore OCR: ${error.message}*`;
-        setOCRStatus(false, 'Errore', true);
+        state.results[pageNum] = { status: 'error', markdown: '', error: error.message };
+        updateOCRDisplay(pageNum);
+        updateThumbnailStatus(pageNum);
     }
 }
 
-// Toggle menu export
-function toggleExportMenu() {
-    elements.exportDropdown.classList.toggle('show');
+async function processCurrentPage() {
+    const current = state.results[state.currentPage];
+    const forceRefresh = current?.status === 'completed';
+    await processPage(state.currentPage, forceRefresh);
 }
 
-// Esporta file
-function exportFile(format) {
-    const content = state.markdowns.join('\n\n---\n\n');
-    const blob = new Blob([content], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
+async function processAllPages() {
+    if (state.isProcessing) return;
 
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${state.filename}.${format}`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    state.isProcessing = true;
+    elements.processAllBtn.disabled = true;
+    elements.processAllBtn.innerHTML = `
+        <div class="loading-spinner" style="width: 16px; height: 16px; border-width: 2px;"></div>
+        Elaborazione...
+    `;
 
-    URL.revokeObjectURL(url);
-    elements.exportDropdown.classList.remove('show');
+    for (let i = 1; i <= state.totalPages; i++) {
+        if (!state.results[i] || state.results[i].status !== 'completed') {
+            await processPage(i);
+            // Wait a bit between pages
+            await new Promise(r => setTimeout(r, 500));
+        }
+    }
+
+    state.isProcessing = false;
+    elements.processAllBtn.disabled = false;
+    elements.processAllBtn.innerHTML = `
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+        </svg>
+        Processa Tutto
+    `;
+
+    showToast('Elaborazione completata', 'success');
 }
 
-// Utility: aggiorna stato
-function setStatus(message, type = '') {
-    elements.status.textContent = message;
-    elements.status.className = 'status ' + type;
+function updateThumbnailStatus(pageNum) {
+    const thumbnails = elements.thumbnailsContainer.children;
+    const thumb = thumbnails[pageNum - 1];
+    if (thumb) {
+        const status = state.results[pageNum]?.status || 'pending';
+        thumb.className = `thumbnail ${status}`;
+        if (pageNum === state.currentPage) {
+            thumb.classList.add('active');
+        }
+    }
 }
 
-// Utility: mostra progresso
-function showProgress(percent) {
+function updateProgress() {
+    const completed = Object.values(state.results).filter(r => r?.status === 'completed').length;
+    const percent = state.totalPages > 0 ? (completed / state.totalPages) * 100 : 0;
     elements.progressBar.style.width = `${percent}%`;
 }
 
-// Utility: stato OCR
-function setOCRStatus(loading, text, isError = false) {
-    const spinner = elements.ocrStatus.querySelector('.spinner');
-    const syncText = elements.ocrStatus.querySelector('.sync-text');
-
-    spinner.style.display = loading ? 'inline-block' : 'none';
-    syncText.textContent = text;
-    elements.ocrStatus.className = 'sync-indicator' + (isError ? '' : (loading ? ' active' : ''));
+// View Toggle
+function toggleRawView() {
+    state.isRawView = !state.isRawView;
+    elements.toggleViewBtn.innerHTML = state.isRawView
+        ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+            <circle cx="12" cy="12" r="3"></circle>
+           </svg> Toggle Preview`
+        : `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+            <circle cx="12" cy="12" r="3"></circle>
+           </svg> Toggle Raw`;
+    updateOCRDisplay(state.currentPage);
 }
 
-// Gestione tastiera
+// Clipboard
+async function copyToClipboard() {
+    const result = state.results[state.currentPage];
+    if (!result?.markdown) {
+        showToast('Nessun contenuto da copiare', 'error');
+        return;
+    }
+
+    try {
+        await navigator.clipboard.writeText(result.markdown);
+        showToast('Copiato negli appunti', 'success');
+
+        const original = elements.copyBtn.innerHTML;
+        elements.copyBtn.innerHTML = `
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+            Copiato!
+        `;
+        setTimeout(() => elements.copyBtn.innerHTML = original, 2000);
+    } catch {
+        showToast('Errore durante la copia', 'error');
+    }
+}
+
+// Download
+async function downloadMarkdown() {
+    if (!state.jobId) return;
+
+    try {
+        const response = await fetch(`${API_BASE}/api/markdown/${state.jobId}`);
+        if (!response.ok) {
+            showToast('Nessun contenuto da scaricare', 'error');
+            return;
+        }
+
+        const data = await response.json();
+        const blob = new Blob([data.markdown], { type: 'text/markdown' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${state.filename || 'documento'}.md`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+
+        showToast('Download completato', 'success');
+    } catch {
+        showToast('Errore durante il download', 'error');
+    }
+}
+
+// Clear
+async function clearAll() {
+    if (state.jobId) {
+        try {
+            await fetch(`${API_BASE}/api/jobs/${state.jobId}`, { method: 'DELETE' });
+        } catch (e) {
+            // Ignore deletion errors
+        }
+    }
+
+    state.jobId = null;
+    state.filename = '';
+    state.totalPages = 0;
+    state.currentPage = 1;
+    state.results = {};
+    state.isProcessing = false;
+    state.isRawView = false;
+
+    elements.fileInput.value = '';
+    elements.progressBar.style.width = '0%';
+    elements.downloadBtn.disabled = true;
+
+    showUploadView();
+}
+
+// Health Check
+async function checkHealth() {
+    try {
+        const response = await fetch(`${API_BASE}/api/health`);
+        const data = await response.json();
+
+        const badge = elements.statusBadge;
+        const text = badge.querySelector('.status-text');
+
+        if (data.ollama_connected && data.glm_ocr_available) {
+            badge.className = 'status-badge healthy';
+            text.textContent = `Ollama + ${data.model}`;
+        } else if (data.ollama_connected) {
+            badge.className = 'status-badge warning';
+            text.textContent = 'GLM-OCR non trovato';
+        } else {
+            badge.className = 'status-badge error';
+            text.textContent = 'Ollama offline';
+        }
+    } catch {
+        const badge = elements.statusBadge;
+        const text = badge.querySelector('.status-text');
+        badge.className = 'status-badge error';
+        text.textContent = 'Backend offline';
+    }
+}
+
+// Keyboard
 function handleKeyboard(e) {
-    // Navigazione con frecce
-    if (e.key === 'ArrowLeft' && !elements.prevPage.disabled) {
+    if (e.key === 'Escape') {
+        if (elements.settingsModal.style.display === 'flex') {
+            elements.settingsModal.style.display = 'none';
+            return;
+        }
+        if (state.jobId) {
+            clearAll();
+            return;
+        }
+    }
+
+    if (e.key === 'ArrowLeft' && !elements.prevPageBtn.disabled) {
         navigatePage(-1);
-    } else if (e.key === 'ArrowRight' && !elements.nextPage.disabled) {
+    } else if (e.key === 'ArrowRight' && !elements.nextPageBtn.disabled) {
         navigatePage(1);
     }
 
-    // Ctrl/Cmd + S per salvare
     if ((e.ctrlKey || e.metaKey) && e.key === 's') {
         e.preventDefault();
-        if (state.markdowns.some(m => m)) {
-            exportFile('md');
+        if (!elements.downloadBtn.disabled) {
+            downloadMarkdown();
         }
     }
 }
 
-// Auto-process dopo upload (opzionale)
-// Scommenta se vuoi che l'OCR parta automaticamente
-/*
-elements.fileInput.addEventListener('change', () => {
+// Loading & Toast
+function showLoading(text = 'Caricamento...') {
+    elements.loadingText.textContent = text;
+    elements.loadingOverlay.style.display = 'flex';
+}
+
+function hideLoading() {
+    elements.loadingOverlay.style.display = 'none';
+}
+
+function showToast(message, type = 'info') {
+    const toast = document.createElement('div');
+    toast.className = `toast ${type}`;
+    toast.innerHTML = `
+        ${type === 'success' ? '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>' : ''}
+        ${type === 'error' ? '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>' : ''}
+        <span>${message}</span>
+    `;
+    document.body.appendChild(toast);
+
     setTimeout(() => {
-        if (state.totalPages > 0 && !state.isProcessing) {
-            processAllPages();
-        }
-    }, 500);
-});
-*/
+        toast.style.animation = 'slideIn 0.3s ease reverse';
+        setTimeout(() => toast.remove(), 300);
+    }, 3000);
+}

@@ -3,523 +3,210 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>GLM OCR - PDF to Markdown</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/marked/marked.min.js">
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #0d1117;
-            color: #c9d1d9;
-            height: 100vh;
-            display: flex;
-            flex-direction: column;
-        }
-
-        /* Header */
-        .header {
-            background: #161b22;
-            border-bottom: 1px solid #30363d;
-            padding: 12px 20px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 20px;
-        }
-
-        .logo {
-            font-size: 18px;
-            font-weight: 600;
-            color: #58a6ff;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .logo svg {
-            width: 24px;
-            height: 24px;
-        }
-
-        .upload-section {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-
-        .file-input-wrapper {
-            position: relative;
-        }
-
-        .file-input {
-            display: none;
-        }
-
-        .file-input-label {
-            background: #238636;
-            color: white;
-            padding: 8px 16px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 14px;
-            font-weight: 500;
-            transition: background 0.2s;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
-
-        .file-input-label:hover {
-            background: #2ea043;
-        }
-
-        .status {
-            font-size: 13px;
-            color: #8b949e;
-        }
-
-        .status.processing {
-            color: #d29922;
-        }
-
-        .status.error {
-            color: #f85149;
-        }
-
-        .status.success {
-            color: #3fb950;
-        }
-
-        /* Controls */
-        .controls {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-
-        .btn {
-            background: #21262d;
-            border: 1px solid #30363d;
-            color: #c9d1d9;
-            padding: 6px 12px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 13px;
-            transition: all 0.2s;
-        }
-
-        .btn:hover:not(:disabled) {
-            background: #30363d;
-            border-color: #8b949e;
-        }
-
-        .btn:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-
-        .btn-primary {
-            background: #1f6feb;
-            border-color: #388bfd;
-        }
-
-        .btn-primary:hover:not(:disabled) {
-            background: #388bfd;
-        }
-
-        .page-nav {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .page-info {
-            font-size: 13px;
-            color: #8b949e;
-            min-width: 80px;
-            text-align: center;
-        }
-
-        /* Main Content */
-        .main {
-            flex: 1;
-            display: flex;
-            overflow: hidden;
-        }
-
-        /* Panels */
-        .panel {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            border-right: 1px solid #30363d;
-            min-width: 0;
-        }
-
-        .panel:last-child {
-            border-right: none;
-        }
-
-        .panel-header {
-            background: #161b22;
-            padding: 10px 16px;
-            border-bottom: 1px solid #30363d;
-            font-size: 13px;
-            font-weight: 600;
-            color: #8b949e;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-        }
-
-        .panel-content {
-            flex: 1;
-            overflow: auto;
-            padding: 20px;
-            background: #0d1117;
-        }
-
-        /* PDF Panel */
-        .pdf-container {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 20px;
-        }
-
-        .pdf-page {
-            background: white;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
-            border-radius: 4px;
-            overflow: hidden;
-            max-width: 100%;
-        }
-
-        .pdf-page img {
-            display: block;
-            max-width: 100%;
-            height: auto;
-        }
-
-        .page-number {
-            position: absolute;
-            bottom: 8px;
-            right: 12px;
-            background: rgba(0,0,0,0.7);
-            color: white;
-            padding: 4px 8px;
-            border-radius: 4px;
-            font-size: 12px;
-        }
-
-        /* Markdown Panel */
-        .markdown-content {
-            background: #161b22;
-            border-radius: 8px;
-            padding: 24px;
-            min-height: 100%;
-        }
-
-        .markdown-content h1,
-        .markdown-content h2,
-        .markdown-content h3,
-        .markdown-content h4 {
-            margin-top: 0;
-            margin-bottom: 16px;
-            color: #e6edf3;
-        }
-
-        .markdown-content p {
-            margin-bottom: 12px;
-            line-height: 1.6;
-        }
-
-        .markdown-content table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-bottom: 16px;
-        }
-
-        .markdown-content th,
-        .markdown-content td {
-            border: 1px solid #30363d;
-            padding: 8px 12px;
-            text-align: left;
-        }
-
-        .markdown-content th {
-            background: #21262d;
-        }
-
-        .markdown-content code {
-            background: #21262d;
-            padding: 2px 6px;
-            border-radius: 3px;
-            font-family: 'SF Mono', monospace;
-            font-size: 0.9em;
-        }
-
-        .markdown-content pre {
-            background: #21262d;
-            padding: 16px;
-            border-radius: 6px;
-            overflow-x: auto;
-            margin-bottom: 16px;
-        }
-
-        .markdown-content pre code {
-            background: none;
-            padding: 0;
-        }
-
-        .markdown-content ul,
-        .markdown-content ol {
-            margin-bottom: 12px;
-            padding-left: 24px;
-        }
-
-        .markdown-content li {
-            margin-bottom: 4px;
-        }
-
-        .markdown-content blockquote {
-            border-left: 4px solid #30363d;
-            padding-left: 16px;
-            margin-bottom: 12px;
-            color: #8b949e;
-        }
-
-        /* Empty State */
-        .empty-state {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            height: 100%;
-            color: #8b949e;
-            text-align: center;
-            padding: 40px;
-        }
-
-        .empty-state-icon {
-            width: 64px;
-            height: 64px;
-            margin-bottom: 16px;
-            opacity: 0.5;
-        }
-
-        .empty-state h3 {
-            font-size: 18px;
-            margin-bottom: 8px;
-            color: #c9d1d9;
-        }
-
-        .empty-state p {
-            font-size: 14px;
-            max-width: 400px;
-        }
-
-        /* Progress */
-        .progress-bar {
-            position: fixed;
-            top: 0;
-            left: 0;
-            height: 2px;
-            background: #58a6ff;
-            transition: width 0.3s;
-            z-index: 1000;
-        }
-
-        /* Editor per markdown */
-        .markdown-editor {
-            width: 100%;
-            min-height: 100%;
-            background: #161b22;
-            border: none;
-            color: #c9d1d9;
-            font-family: 'SF Mono', monospace;
-            font-size: 14px;
-            line-height: 1.6;
-            padding: 24px;
-            resize: none;
-            outline: none;
-            border-radius: 8px;
-        }
-
-        /* Sync indicator */
-        .sync-indicator {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            font-size: 12px;
-            color: #8b949e;
-        }
-
-        .sync-indicator.active {
-            color: #3fb950;
-        }
-
-        /* Loading spinner */
-        .spinner {
-            width: 16px;
-            height: 16px;
-            border: 2px solid #30363d;
-            border-top-color: #58a6ff;
-            border-radius: 50%;
-            animation: spin 0.8s linear infinite;
-        }
-
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
-
-        /* Export buttons */
-        .export-menu {
-            position: relative;
-        }
-
-        .export-dropdown {
-            position: absolute;
-            top: 100%;
-            right: 0;
-            margin-top: 4px;
-            background: #161b22;
-            border: 1px solid #30363d;
-            border-radius: 6px;
-            padding: 4px;
-            display: none;
-            min-width: 140px;
-        }
-
-        .export-dropdown.show {
-            display: block;
-        }
-
-        .export-item {
-            padding: 8px 12px;
-            font-size: 13px;
-            cursor: pointer;
-            border-radius: 4px;
-        }
-
-        .export-item:hover {
-            background: #21262d;
-        }
-    </style>
+    <title>GLM-OCR Converter</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
 <body>
-    <div class="progress-bar" id="progressBar" style="width: 0%"></div>
+    <!-- Progress Bar -->
+    <div class="progress-bar" id="progressBar"></div>
 
+    <!-- Header -->
     <header class="header">
-        <div class="logo">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                <polyline points="14 2 14 8 20 8"></polyline>
-                <line x1="16" y1="13" x2="8" y2="13"></line>
-                <line x1="16" y1="17" x2="8" y2="17"></line>
-            </svg>
-            GLM OCR
-        </div>
-
-        <div class="upload-section">
-            <div class="file-input-wrapper">
-                <input type="file" id="fileInput" class="file-input" accept=".pdf">
-                <label for="fileInput" class="file-input-label">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                        <polyline points="17 8 12 3 7 8"></polyline>
-                        <line x1="12" y1="3" x2="12" y2="15"></line>
-                    </svg>
-                    Carica PDF
-                </label>
+        <div class="header-left">
+            <div class="logo">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                    <polyline points="14 2 14 8 20 8"></polyline>
+                    <line x1="16" y1="13" x2="8" y2="13"></line>
+                    <line x1="16" y1="17" x2="8" y2="17"></line>
+                </svg>
+                <span>GLM-OCR Converter</span>
             </div>
-            <span class="status" id="status">Pronto</span>
-        </div>
-
-        <div class="controls">
-            <div class="page-nav" id="pageNav" style="display: none;">
-                <button class="btn" id="prevPage" title="Pagina precedente">
-                    ←
-                </button>
-                <span class="page-info" id="pageInfo">Pagina 1/1</span>
-                <button class="btn" id="nextPage" title="Pagina successiva">
-                    →
-                </button>
+            <div class="status-badge" id="statusBadge">
+                <span class="status-dot"></span>
+                <span class="status-text">Verificando Ollama...</span>
             </div>
-
-            <button class="btn btn-primary" id="processAll" disabled>
-                Processa tutto
+        </div>
+        <div class="header-right">
+            <input type="file" id="fileInput" accept=".pdf,.png,.jpg,.jpeg,.tiff,.tif,.bmp,.gif,.webp" hidden>
+            <button class="btn" id="settingsBtn" title="Configurazione Prompt">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="3"></circle>
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                </svg>
+                Prompt
             </button>
-
-            <div class="export-menu">
-                <button class="btn" id="exportBtn" disabled>
-                    Esporta ▼
-                </button>
-                <div class="export-dropdown" id="exportDropdown">
-                    <div class="export-item" data-format="md">Markdown (.md)</div>
-                    <div class="export-item" data-format="txt">Testo (.txt)</div>
-                </div>
-            </div>
+            <button class="btn btn-primary" id="uploadBtn">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="17 8 12 3 7 8"></polyline>
+                    <line x1="12" y1="3" x2="12" y2="15"></line>
+                </svg>
+                Carica Documento
+            </button>
+            <button class="btn" id="processAllBtn" disabled>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                </svg>
+                Processa Tutto
+            </button>
+            <button class="btn" id="downloadBtn" disabled>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="7 10 12 15 17 10"></polyline>
+                    <line x1="12" y1="15" x2="12" y2="3"></line>
+                </svg>
+                Scarica Markdown
+            </button>
+            <button class="btn btn-danger" id="clearBtn" style="display: none;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="3 6 5 6 21 6"></polyline>
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                </svg>
+                Pulisci
+            </button>
         </div>
     </header>
 
-    <main class="main">
-        <div class="panel">
-            <div class="panel-header">
-                <span>📄 Documento PDF</span>
-                <span class="sync-indicator" id="syncIndicator">
-                    <span class="spinner" style="display: none;"></span>
-                    <span class="sync-text">Originale</span>
-                </span>
+    <!-- Upload Screen -->
+    <div class="upload-screen" id="uploadScreen">
+        <div class="drop-zone" id="dropZone">
+            <div class="drop-zone-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                    <polyline points="14 2 14 8 20 8"></polyline>
+                    <line x1="16" y1="13" x2="8" y2="13"></line>
+                    <line x1="16" y1="17" x2="8" y2="17"></line>
+                </svg>
             </div>
-            <div class="panel-content" id="pdfPanel">
-                <div class="empty-state">
-                    <svg class="empty-state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                        <polyline points="14 2 14 8 20 8"></polyline>
-                        <line x1="16" y1="13" x2="8" y2="13"></line>
-                        <line x1="16" y1="17" x2="8" y2="17"></line>
-                    </svg>
-                    <h3>Carica un PDF</h3>
-                    <p>Seleziona un file PDF per iniziare. Verrà visualizzato qui pagina per pagina.</p>
-                </div>
-            </div>
+            <h2>Carica un documento</h2>
+            <p>Trascina qui un file PDF o immagine, oppure clicca per selezionarlo</p>
+            <p class="supported-formats">Formati supportati: PDF, PNG, JPG, JPEG, TIFF, BMP, GIF, WEBP</p>
         </div>
+    </div>
 
-        <div class="panel">
+    <!-- Main View -->
+    <div class="main-view" id="mainView" style="display: none;">
+        <!-- Left Panel: Document Preview -->
+        <div class="panel panel-left">
             <div class="panel-header">
-                <span>📝 Markdown OCR</span>
-                <div style="display: flex; gap: 8px; align-items: center;">
-                    <button class="btn" id="editToggle" style="display: none; font-size: 11px;">
-                        Modifica
+                <h3>Documento Originale</h3>
+                <span class="page-counter" id="pageCounter">Pagina 1 di 1</span>
+            </div>
+            <div class="panel-content">
+                <div class="thumbnails-container" id="thumbnailsContainer"></div>
+                <div class="page-container" id="pageContainer">
+                    <img id="currentPageImg" src="" alt="Pagina documento">
+                </div>
+                <div class="page-nav">
+                    <button class="btn" id="prevPageBtn" disabled>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="15 18 9 12 15 6"></polyline>
+                        </svg>
+                        Precedente
                     </button>
-                    <span class="sync-indicator" id="ocrStatus">
-                        <span class="spinner" style="display: none;"></span>
-                        <span class="sync-text">In attesa</span>
-                    </span>
-                </div>
-            </div>
-            <div class="panel-content" id="markdownPanel">
-                <div class="empty-state">
-                    <svg class="empty-state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                        <polyline points="14 2 14 8 20 8"></polyline>
-                        <line x1="16" y1="13" x2="8" y2="13"></line>
-                        <line x1="16" y1="17" x2="8" y2="17"></line>
-                    </svg>
-                    <h3>Risultato OCR</h3>
-                    <p>Il testo estratto con GLM OCR apparirà qui in formato Markdown.</p>
+                    <button class="btn" id="nextPageBtn" disabled>
+                        Successiva
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="9 18 15 12 9 6"></polyline>
+                        </svg>
+                    </button>
                 </div>
             </div>
         </div>
-    </main>
 
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <script src="app.js"></script>
+        <!-- Right Panel: OCR Result -->
+        <div class="panel panel-right">
+            <div class="panel-header">
+                <h3>Risultato OCR</h3>
+                <div class="panel-actions">
+                    <button class="btn btn-sm" id="toggleViewBtn">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                            <circle cx="12" cy="12" r="3"></circle>
+                        </svg>
+                        Toggle Raw
+                    </button>
+                    <button class="btn btn-sm" id="copyBtn">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                        </svg>
+                        Copia
+                    </button>
+                    <button class="btn btn-sm btn-primary" id="processPageBtn">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                        </svg>
+                        OCR
+                    </button>
+                </div>
+            </div>
+            <div class="panel-content">
+                <div class="ocr-status" id="ocrStatus">
+                    <span class="status-text">Clicca "OCR" per processare questa pagina</span>
+                </div>
+                <div class="ocr-result" id="ocrResult">
+                    <div class="markdown-body" id="markdownBody"></div>
+                    <textarea class="raw-editor" id="rawEditor" style="display: none;"></textarea>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div class="modal-overlay" id="settingsModal" style="display: none;">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>Configurazione Prompt OCR</h3>
+                <button class="modal-close" id="closeSettingsBtn">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="promptEditor">Prompt per il modello GLM-OCR:</label>
+                    <textarea id="promptEditor" class="prompt-textarea" placeholder="Inserisci il prompt OCR..."></textarea>
+                </div>
+                <div class="prompt-variables">
+                    <p class="hint">Variabili disponibili nel prompt:</p>
+                    <ul>
+                        <li><code>{image}</code> - L'immagine verrà analizzata</li>
+                    </ul>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn" id="resetPromptBtn">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
+                        <path d="M3 3v5h5"></path>
+                    </svg>
+                    Reset Default
+                </button>
+                <button class="btn btn-primary" id="savePromptBtn">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                        <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                        <polyline points="7 3 7 8 15 8"></polyline>
+                    </svg>
+                    Salva
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" id="loadingOverlay" style="display: none;">
+        <div class="loading-modal">
+            <div class="loading-spinner"></div>
+            <p id="loadingText">Elaborazione in corso...</p>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
 </body>
 </html>
