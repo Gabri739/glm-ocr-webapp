@@ -129,7 +129,3 @@ ollama pull glm-ocr:latest
 
 ### Timeout su documenti grandi
 Il timeout è impostato a 10 minuti. Per documenti molto lunghi, puoi aumentare `RENDER_DPI` per qualità migliore o diminuirlo per performance migliori.
-
-## Licenza
-
-MIT
