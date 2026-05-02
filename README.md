@@ -157,7 +157,7 @@ ollama pull qwen3.5:397b-cloud
 ```
 
 ### Timeout su documenti grandi
-Il timeout e impostato a 10 minuti. Per documenti molto lunghi, puoi aumentare `RENDER_DPI` per qualita migliore o diminuirlo per performance migliori.
+Il timeout è impostato a 10 minuti. Per documenti molto lunghi, puoi aumentare `RENDER_DPI` per qualità migliore o diminuirlo per performance migliori.
 
 ### Caricamento infinito
 Se l'OCR sembra bloccato, verifica:
