@@ -17,12 +17,21 @@ from PIL import Image
 # Configurazione
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "glm-ocr:latest")
+VISION_MODEL = os.environ.get("VISION_MODEL", "qwen3.5:397b-cloud")
 OCR_PROMPT = os.environ.get(
     "OCR_PROMPT",
     "Extract all content from this document image and output clean, well-formatted Markdown. "
     "Preserve headings, paragraphs, lists, and tables (use Markdown table syntax). "
     "Describe figures concisely in italics. Do not add commentary; return only the Markdown."
 )
+VISION_PROMPT = os.environ.get(
+    "VISION_PROMPT",
+    "The following is OCR text extracted from the image above. Review the image and the extracted text, "
+    "then produce a corrected, complete version. Fix any errors, fill in missing content (especially tables, "
+    "formulas, and figures), and ensure proper Markdown formatting. "
+    "Output only the corrected Markdown."
+)
+
 
 RENDER_DPI = int(os.environ.get("RENDER_DPI", "150"))
 
@@ -133,8 +142,14 @@ async def get_job(job_id: str):
 
 
 @app.get("/api/ocr/{job_id}/{page}")
-async def ocr_page(job_id: str, page: int, refresh: bool = False):
-    """Run OCR and stream incremental Markdown chunks as text/event-stream."""
+async def ocr_page(job_id: str, page: int, refresh: bool = False, strategy: str = "vision"):
+    """Run OCR with selected strategy and stream incremental Markdown chunks.
+
+    Strategies:
+    - "ocr": Use glm-ocr only
+    - "vision": Use vision model directly
+    - "hybrid": OCR first, then vision refinement (both streamed)
+    """
     job_dir = _job_dir(job_id)
     img_path = job_dir / f"page-{page:04d}.png"
     if not img_path.exists():
@@ -152,51 +167,169 @@ async def ocr_page(job_id: str, page: int, refresh: bool = False):
         return StreamingResponse(cached_stream(), media_type="text/event-stream")
 
     img_b64 = base64.b64encode(img_path.read_bytes()).decode("ascii")
-    payload = {
-        "model": OLLAMA_MODEL,
-        "prompt": OCR_PROMPT,
-        "images": [img_b64],
-        "stream": True,
-        "options": {
-            "temperature": 0.0,
-            "num_predict": 16384,
-        },
-    }
+    timeout = httpx.Timeout(connect=10.0, read=600.0, write=60.0, pool=10.0)
 
     async def gen():
-        collected: list[str] = []
-        try:
-            timeout = httpx.Timeout(connect=10.0, read=600.0, write=60.0, pool=10.0)
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                async with client.stream("POST", f"{OLLAMA_URL}/api/generate", json=payload) as resp:
-                    if resp.status_code != 200:
-                        body = (await resp.aread()).decode("utf-8", errors="replace")
-                        err = {"error": f"Ollama HTTP {resp.status_code}", "body": body[:500]}
-                        yield f"event: error\ndata: {json.dumps(err)}\n\n"
-                        return
-                    async for line in resp.aiter_lines():
-                        if not line:
-                            continue
-                        try:
-                            obj = json.loads(line)
-                        except json.JSONDecodeError:
-                            continue
-                        chunk = obj.get("response", "")
-                        if chunk:
-                            collected.append(chunk)
-                            yield f"data: {json.dumps({'chunk': chunk})}\n\n"
-                        if obj.get("done"):
-                            break
-        except httpx.RequestError as e:
-            yield f"event: error\ndata: {json.dumps({'error': f'Connection error: {str(e)}'})}\n\n"
-            return
-        except asyncio.CancelledError:
-            raise
+        final_text = ""
 
-        full = "".join(collected)
-        if full.strip():
-            cache_path.write_text(full, encoding="utf-8")
-        yield f"event: done\ndata: {json.dumps({'ok': True, 'length': len(full)})}\n\n"
+        if strategy == "ocr":
+            yield f"event: stage\ndata: {json.dumps({'stage': 'ocr', 'message': 'Running OCR...'})}\n\n"
+            ocr_payload = {
+                "model": OLLAMA_MODEL,
+                "prompt": OCR_PROMPT,
+                "images": [img_b64],
+                "stream": True,
+                "options": {"temperature": 0.0, "num_predict": 16384},
+            }
+            try:
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    async with client.stream("POST", f"{OLLAMA_URL}/api/generate", json=ocr_payload) as resp:
+                        if resp.status_code != 200:
+                            body = (await resp.aread()).decode("utf-8", errors="replace")
+                            err = {"error": f"OCR HTTP {resp.status_code}", "body": body[:500]}
+                            yield f"event: error\ndata: {json.dumps(err)}\n\n"
+                            return
+                        async for line in resp.aiter_lines():
+                            if not line:
+                                continue
+                            try:
+                                obj = json.loads(line)
+                            except json.JSONDecodeError:
+                                continue
+                            chunk = obj.get("response", "")
+                            if chunk:
+                                final_text += chunk
+                                yield f"data: {json.dumps({'chunk': chunk})}\n\n"
+                            if obj.get("done"):
+                                break
+            except httpx.RequestError as e:
+                yield f"event: error\ndata: {json.dumps({'error': f'OCR connection error: {str(e)}'})}\n\n"
+                return
+            except asyncio.CancelledError:
+                raise
+
+        elif strategy == "vision":
+            yield f"event: stage\ndata: {json.dumps({'stage': 'vision', 'message': 'Extracting with vision model...'})}\n\n"
+            vision_payload = {
+                "model": VISION_MODEL,
+                "prompt": OCR_PROMPT,
+                "images": [img_b64],
+                "stream": True,
+                "options": {"temperature": 0.1, "num_predict": 16384},
+            }
+            try:
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    async with client.stream("POST", f"{OLLAMA_URL}/api/generate", json=vision_payload) as resp:
+                        if resp.status_code != 200:
+                            body = (await resp.aread()).decode("utf-8", errors="replace")
+                            err = {"error": f"Vision HTTP {resp.status_code}", "body": body[:500]}
+                            yield f"event: error\ndata: {json.dumps(err)}\n\n"
+                            return
+                        async for line in resp.aiter_lines():
+                            if not line:
+                                continue
+                            try:
+                                obj = json.loads(line)
+                            except json.JSONDecodeError:
+                                continue
+                            chunk = obj.get("response", "")
+                            if chunk:
+                                final_text += chunk
+                                yield f"data: {json.dumps({'chunk': chunk})}\n\n"
+                            if obj.get("done"):
+                                break
+            except httpx.RequestError as e:
+                yield f"event: error\ndata: {json.dumps({'error': f'Vision connection error: {str(e)}'})}\n\n"
+                return
+            except asyncio.CancelledError:
+                raise
+
+        elif strategy == "hybrid":
+            # Passata 1: OCR (STREAMED)
+            yield f"event: stage\ndata: {json.dumps({'stage': 'ocr', 'message': 'Running OCR...'})}\n\n"
+            first_pass_text = ""
+            ocr_payload = {
+                "model": OLLAMA_MODEL,
+                "prompt": OCR_PROMPT,
+                "images": [img_b64],
+                "stream": True,
+                "options": {"temperature": 0.0, "num_predict": 16384},
+            }
+            try:
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    async with client.stream("POST", f"{OLLAMA_URL}/api/generate", json=ocr_payload) as resp:
+                        if resp.status_code != 200:
+                            body = (await resp.aread()).decode("utf-8", errors="replace")
+                            err = {"error": f"OCR HTTP {resp.status_code}", "body": body[:500]}
+                            yield f"event: error\ndata: {json.dumps(err)}\n\n"
+                            return
+                        async for line in resp.aiter_lines():
+                            if not line:
+                                continue
+                            try:
+                                obj = json.loads(line)
+                            except json.JSONDecodeError:
+                                continue
+                            chunk = obj.get("response", "")
+                            if chunk:
+                                first_pass_text += chunk
+                                yield f"data: {json.dumps({'chunk': chunk})}\n\n"
+                            if obj.get("done"):
+                                break
+            except httpx.RequestError as e:
+                yield f"event: error\ndata: {json.dumps({'error': f'OCR connection error: {str(e)}'})}\n\n"
+                return
+            except asyncio.CancelledError:
+                raise
+
+            if not first_pass_text.strip():
+                yield f"event: error\ndata: {json.dumps({'error': 'OCR produced no text'})}\n\n"
+                return
+
+            # Passata 2: Vision refinement (STREAMED)
+            yield f"event: stage\ndata: {json.dumps({'stage': 'vision', 'message': 'Refining with vision model...'})}\n\n"
+            vision_prompt = f"{VISION_PROMPT}\n\n--- EXTRACTED TEXT ---\n{first_pass_text}\n--- END ---"
+            vision_payload = {
+                "model": VISION_MODEL,
+                "prompt": vision_prompt,
+                "images": [img_b64],
+                "stream": True,
+                "options": {"temperature": 0.1, "num_predict": 16384},
+            }
+            try:
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    async with client.stream("POST", f"{OLLAMA_URL}/api/generate", json=vision_payload) as resp:
+                        if resp.status_code != 200:
+                            body = (await resp.aread()).decode("utf-8", errors="replace")
+                            err = {"error": f"Vision HTTP {resp.status_code}", "body": body[:500]}
+                            yield f"event: error\ndata: {json.dumps(err)}\n\n"
+                            return
+                        async for line in resp.aiter_lines():
+                            if not line:
+                                continue
+                            try:
+                                obj = json.loads(line)
+                            except json.JSONDecodeError:
+                                continue
+                            chunk = obj.get("response", "")
+                            if chunk:
+                                final_text += chunk
+                                yield f"data: {json.dumps({'chunk': chunk})}\n\n"
+                            if obj.get("done"):
+                                break
+            except httpx.RequestError as e:
+                yield f"event: error\ndata: {json.dumps({'error': f'Vision connection error: {str(e)}'})}\n\n"
+                return
+            except asyncio.CancelledError:
+                raise
+
+        else:
+            yield f"event: error\ndata: {json.dumps({'error': f'Invalid strategy: {strategy}. Use: ocr, vision, hybrid'})}\n\n"
+            return
+
+        if final_text.strip():
+            cache_path.write_text(final_text, encoding="utf-8")
+        yield f"event: done\ndata: {json.dumps({'ok': True, 'length': len(final_text), 'strategy': strategy})}\n\n"
 
     return StreamingResponse(gen(), media_type="text/event-stream")
 
@@ -233,19 +366,23 @@ async def delete_job(job_id: str):
 
 @app.get("/api/health")
 async def health_check():
-    """Check se Ollama è raggiungibile e glm-ocr disponibile"""
+    """Check se Ollama è raggiungibile e i modelli disponibili"""
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             response = await client.get(f"{OLLAMA_URL}/api/tags")
             if response.status_code == 200:
                 models = response.json().get("models", [])
-                has_glm = any("glm-ocr" in m.get("name", "") for m in models)
+                model_names = [m.get("name", "") for m in models]
+                has_glm = any("glm-ocr" in name for name in model_names)
+                has_vision = VISION_MODEL in model_names
                 return {
                     "status": "healthy",
                     "ollama_connected": True,
                     "ollama_url": OLLAMA_URL,
                     "glm_ocr_available": has_glm,
-                    "model": OLLAMA_MODEL
+                    "vision_model_available": has_vision,
+                    "ocr_model": OLLAMA_MODEL,
+                    "vision_model": VISION_MODEL
                 }
     except Exception:
         pass
@@ -254,6 +391,7 @@ async def health_check():
         "status": "unhealthy",
         "ollama_connected": False,
         "glm_ocr_available": False,
+        "vision_model_available": False,
         "ollama_url": OLLAMA_URL
     }
 

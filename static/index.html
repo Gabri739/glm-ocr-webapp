@@ -30,6 +30,14 @@
         </div>
         <div class="header-right">
             <input type="file" id="fileInput" accept=".pdf,.png,.jpg,.jpeg,.tiff,.tif,.bmp,.gif,.webp" hidden>
+            <div class="strategy-selector">
+                <label for="strategySelect">Strategia:</label>
+                <select id="strategySelect" class="strategy-select">
+                    <option value="vision" selected>Vision</option>
+                    <option value="ocr">OCR</option>
+                    <option value="hybrid">Hybrid</option>
+                </select>
+            </div>
             <button class="btn" id="settingsBtn" title="Configurazione Prompt">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <circle cx="12" cy="12" r="3"></circle>

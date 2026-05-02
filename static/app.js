@@ -25,6 +25,7 @@ const elements = {
     clearBtn: document.getElementById('clearBtn'),
     statusBadge: document.getElementById('statusBadge'),
     settingsBtn: document.getElementById('settingsBtn'),
+    strategySelect: document.getElementById('strategySelect'),
 
     uploadScreen: document.getElementById('uploadScreen'),
     dropZone: document.getElementById('dropZone'),
@@ -100,6 +101,11 @@ function setupEventListeners() {
         if (e.target === elements.settingsModal) {
             elements.settingsModal.style.display = 'none';
         }
+    });
+
+    // Strategy selector
+    elements.strategySelect?.addEventListener('change', () => {
+        checkHealth();
     });
 
     // Keyboard
@@ -350,7 +356,11 @@ async function processPage(pageNum, forceRefresh = false) {
     updateThumbnailStatus(pageNum);
 
     try {
-        const url = `${API_BASE}/api/ocr/${state.jobId}/${pageNum}${forceRefresh ? '?refresh=true' : ''}`;
+        const strategy = elements.strategySelect?.value || 'vision';
+        const params = new URLSearchParams();
+        if (forceRefresh) params.append('refresh', 'true');
+        params.append('strategy', strategy);
+        const url = `${API_BASE}/api/ocr/${state.jobId}/${pageNum}?${params.toString()}`;
         const eventSource = new EventSource(url);
 
         let markdown = '';
@@ -374,6 +384,26 @@ async function processPage(pageNum, forceRefresh = false) {
                 // Ignore parse errors
             }
         };
+
+        eventSource.addEventListener('stage', (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                if (data.stage === 'vision') {
+                    // Azzera markdown quando inizia la seconda passata vision
+                    markdown = '';
+                    state.results[pageNum] = { status: 'processing', markdown: '', error: '' };
+                    if (pageNum === state.currentPage) {
+                        if (state.isRawView) {
+                            elements.rawEditor.value = '';
+                        } else {
+                            elements.markdownBody.innerHTML = '';
+                        }
+                    }
+                }
+            } catch (e) {
+                // Ignore parse errors
+            }
+        });
 
         eventSource.addEventListener('done', (event) => {
             eventSource.close();
@@ -567,7 +597,8 @@ async function checkHealth() {
 
         if (data.ollama_connected && data.glm_ocr_available) {
             badge.className = 'status-badge healthy';
-            text.textContent = `Ollama + ${data.model}`;
+            const strategy = elements.strategySelect?.value || 'vision';
+            text.textContent = `Ollama (${strategy})`;
         } else if (data.ollama_connected) {
             badge.className = 'status-badge warning';
             text.textContent = 'GLM-OCR non trovato';

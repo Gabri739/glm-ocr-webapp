@@ -161,6 +161,41 @@ body {
     font-size: 12px;
 }
 
+/* Strategy Selector */
+.strategy-selector {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-right: 4px;
+}
+
+.strategy-selector label {
+    font-size: 13px;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+.strategy-select {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    color: var(--text-primary);
+    padding: 6px 10px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.strategy-select:hover, .strategy-select:focus {
+    border-color: var(--accent-blue);
+    outline: none;
+}
+
+.strategy-select option {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+}
+
 /* Upload Screen */
 .upload-screen {
     flex: 1;
