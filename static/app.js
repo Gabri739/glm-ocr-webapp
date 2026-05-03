@@ -394,6 +394,16 @@ async function processPage(pageNum, forceRefresh = false) {
         eventSource.addEventListener('stage', (event) => {
             try {
                 const data = JSON.parse(event.data);
+                if (data.stage === 'auto') {
+                    // Show auto-routing info in status
+                    if (pageNum === state.currentPage && elements.ocrStatus) {
+                        elements.ocrStatus.className = 'ocr-status processing';
+                        elements.ocrStatus.innerHTML = `
+                            <div class="loading-spinner" style="width: 14px; height: 14px; border-width: 2px;"></div>
+                            <span class="status-text">${data.message || 'Auto-routing...'}</span>
+                        `;
+                    }
+                }
                 if (data.stage === 'vision') {
                     // Show overlay while vision model is processing; keep OCR text visible underneath
                     if (pageNum === state.currentPage && elements.visionOverlay) {
