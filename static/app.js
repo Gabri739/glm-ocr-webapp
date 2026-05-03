@@ -41,6 +41,7 @@ const elements = {
     ocrStatus: document.getElementById('ocrStatus'),
     markdownBody: document.getElementById('markdownBody'),
     rawEditor: document.getElementById('rawEditor'),
+    visionOverlay: document.getElementById('visionOverlay'),
     toggleViewBtn: document.getElementById('toggleViewBtn'),
     copyBtn: document.getElementById('copyBtn'),
     processPageBtn: document.getElementById('processPageBtn'),
@@ -252,6 +253,11 @@ function navigatePage(direction) {
 
 // OCR Display
 function updateOCRDisplay(pageNum) {
+    // Hide vision overlay when switching pages
+    if (elements.visionOverlay) {
+        elements.visionOverlay.style.display = 'none';
+    }
+
     const result = state.results[pageNum];
 
     if (!result) {
@@ -389,15 +395,9 @@ async function processPage(pageNum, forceRefresh = false) {
             try {
                 const data = JSON.parse(event.data);
                 if (data.stage === 'vision') {
-                    // Azzera markdown quando inizia la seconda passata vision
-                    markdown = '';
-                    state.results[pageNum] = { status: 'processing', markdown: '', error: '' };
-                    if (pageNum === state.currentPage) {
-                        if (state.isRawView) {
-                            elements.rawEditor.value = '';
-                        } else {
-                            elements.markdownBody.innerHTML = '';
-                        }
+                    // Show overlay while vision model is processing; keep OCR text visible underneath
+                    if (pageNum === state.currentPage && elements.visionOverlay) {
+                        elements.visionOverlay.style.display = 'flex';
                     }
                 }
             } catch (e) {
@@ -408,6 +408,9 @@ async function processPage(pageNum, forceRefresh = false) {
         eventSource.addEventListener('done', (event) => {
             eventSource.close();
             state.results[pageNum] = { status: 'completed', markdown, error: '' };
+            if (pageNum === state.currentPage && elements.visionOverlay) {
+                elements.visionOverlay.style.display = 'none';
+            }
             updateOCRDisplay(pageNum);
             updateThumbnailStatus(pageNum);
             updateProgress();
@@ -415,6 +418,9 @@ async function processPage(pageNum, forceRefresh = false) {
 
         eventSource.addEventListener('error', (event) => {
             eventSource.close();
+            if (pageNum === state.currentPage && elements.visionOverlay) {
+                elements.visionOverlay.style.display = 'none';
+            }
             try {
                 const data = JSON.parse(event.data);
                 state.results[pageNum] = { status: 'error', markdown: '', error: data.error || 'Unknown error' };
@@ -427,6 +433,9 @@ async function processPage(pageNum, forceRefresh = false) {
 
         eventSource.onerror = () => {
             eventSource.close();
+            if (pageNum === state.currentPage && elements.visionOverlay) {
+                elements.visionOverlay.style.display = 'none';
+            }
             state.results[pageNum] = { status: 'error', markdown: '', error: 'Connection failed' };
             updateOCRDisplay(pageNum);
             updateThumbnailStatus(pageNum);

@@ -104,11 +104,12 @@
             </div>
             <div class="panel-content">
                 <div class="thumbnails-container" id="thumbnailsContainer"></div>
-                <div class="page-container" id="pageContainer">
-                    <img id="currentPageImg" src="" alt="Pagina documento">
-                </div>
-                <div class="page-nav">
-                    <button class="btn" id="prevPageBtn" disabled>
+                <div class="document-main">
+                    <div class="page-container" id="pageContainer">
+                        <img id="currentPageImg" src="" alt="Pagina documento">
+                    </div>
+                    <div class="page-nav">
+                        <button class="btn" id="prevPageBtn" disabled>
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <polyline points="15 18 9 12 15 6"></polyline>
                         </svg>
@@ -120,6 +121,7 @@
                             <polyline points="9 18 15 12 9 6"></polyline>
                         </svg>
                     </button>
+                </div>
                 </div>
             </div>
         </div>
@@ -156,6 +158,12 @@
                     <span class="status-text">Clicca "OCR" per processare questa pagina</span>
                 </div>
                 <div class="ocr-result" id="ocrResult">
+                    <div class="vision-overlay" id="visionOverlay" style="display: none;">
+                        <div class="vision-overlay-content">
+                            <div class="loading-spinner"></div>
+                            <p>Processamento modello vision...</p>
+                        </div>
+                    </div>
                     <div class="markdown-body" id="markdownBody"></div>
                     <textarea class="raw-editor" id="rawEditor" style="display: none;"></textarea>
                 </div>

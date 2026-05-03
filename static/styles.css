@@ -302,6 +302,15 @@ body {
     gap: 12px;
 }
 
+/* Left panel layout: thumbnails sidebar + document */
+.panel-left .panel-content {
+    flex-direction: row;
+    overflow: hidden;
+    gap: 0;
+    padding: 0;
+    align-items: stretch;
+}
+
 /* Page Counter */
 .page-counter {
     font-size: 13px;
@@ -311,10 +320,33 @@ body {
 /* Thumbnails */
 .thumbnails-container {
     display: flex;
+    flex-direction: column;
     gap: 8px;
-    overflow-x: auto;
-    padding-bottom: 12px;
+    overflow-y: auto;
+    padding: 16px 4px 16px 16px;
     flex-shrink: 0;
+    width: 96px;
+    height: 121vh;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-color) var(--bg-secondary);
+}
+
+.thumbnails-container::-webkit-scrollbar {
+    width: 8px;
+}
+
+.thumbnails-container::-webkit-scrollbar-track {
+    background: var(--bg-secondary);
+    border-radius: 4px;
+}
+
+.thumbnails-container::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 4px;
+}
+
+.thumbnails-container::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted);
 }
 
 .thumbnail {
@@ -358,6 +390,17 @@ body {
     width: 100%;
     height: 100%;
     object-fit: cover;
+}
+
+/* Document Main (wraps page + nav in left panel) */
+.document-main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-width: 0;
+    overflow: hidden;
+    padding: 16px;
 }
 
 /* Page Container */
@@ -423,6 +466,34 @@ body {
     overflow: hidden;
     background: var(--bg-secondary);
     border-radius: 8px;
+    position: relative;
+}
+
+/* Vision Overlay (shown during hybrid vision pass) */
+.vision-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(13, 17, 23, 0.92);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10;
+    border-radius: 8px;
+}
+
+.vision-overlay-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    color: var(--text-secondary);
+    font-size: 14px;
+}
+
+.vision-overlay-content .loading-spinner {
+    width: 32px;
+    height: 32px;
+    border-width: 3px;
 }
 
 /* Markdown Body */
