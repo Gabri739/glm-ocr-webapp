@@ -33,6 +33,10 @@ Webapp per convertire PDF e immagini in Markdown pulito usando modelli OCR e Vis
    ```bash
    ollama pull qwen3.5:397b-cloud
    ```
+5. **Modello Auto** (opzionale, per strategia auto):
+   ```bash
+   ollama pull Maternion/LightOnOCR-2:latest
+   ```
 
 ## Installazione
 
@@ -80,6 +84,7 @@ Variabili d'ambiente opzionali:
 | `OLLAMA_URL` | `http://localhost:11434` | URL del server Ollama |
 | `OLLAMA_MODEL` | `glm-ocr:latest` | Modello OCR |
 | `VISION_MODEL` | `qwen3.5:397b-cloud` | Modello Vision (hybrid/vision) |
+| `COMPLEX_MODEL` | `Maternion/LightOnOCR-2:latest` | Modello Auto (strategia auto) |
 | `OCR_PROMPT` | *(vedi codice)* | Prompt per l'OCR |
 | `VISION_PROMPT` | *(vedi codice)* | Prompt per la correzione Vision |
 | `RENDER_DPI` | `150` | DPI per rendering PDF |
@@ -155,6 +160,7 @@ ollama serve
 # Scarica i modelli necessari
 ollama pull glm-ocr:latest
 ollama pull qwen3.5:397b-cloud
+ollama pull Maternion/LightOnOCR-2:latest
 ```
 
 ### Timeout su documenti grandi
