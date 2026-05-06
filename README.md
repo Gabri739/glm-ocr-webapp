@@ -1,11 +1,11 @@
-# GLM-OCR WebApp
+# PDF-to-MD Converter
 
 Webapp per convertire PDF e immagini in Markdown pulito usando modelli OCR e Vision tramite Ollama.
 
 ## Caratteristiche
 
 - **Multi-formato**: Supporta PDF, PNG, JPG, JPEG, TIFF, BMP, WEBP
-- **Strategie multiple**: Scegli tra Vision, OCR o Hybrid
+- **Strategie multiple**: Scegli tra Auto, Vision, OCR o Hybrid
 - **Streaming OCR**: Risultati in tempo reale mentre il modello elabora
 - **Vista affiancata**: Documento originale a sinistra, Markdown a destra
 - **Navigazione pagine**: Thumbnail per navigare tra le pagine
@@ -16,15 +16,16 @@ Webapp per convertire PDF e immagini in Markdown pulito usando modelli OCR e Vis
 
 | Strategia | Descrizione | Quando usarla |
 |-----------|-------------|---------------|
-| **Vision** (default) | Usa direttamente il modello vision sull'immagine | Veloce, una sola chiamata |
-| **OCR** | Usa solo glm-ocr | Testo stampato chiaro, massima velocita |
+| **Auto** (default) | Sceglie automaticamente il modello migliore per ogni pagina | Massima qualita senza pensarci |
+| **Vision** | Usa direttamente il modello vision sull'immagine | Veloce, una sola chiamata |
+| **OCR** | Usa solo il modello OCR | Testo stampato chiaro, massima velocita |
 | **Hybrid** | Prima passata OCR, poi correzione Vision | Documenti complessi (tabelle, formule) |
 
 ## Requisiti
 
 1. **Python 3.10+**
 2. **Ollama** installato e in esecuzione
-3. **Modello GLM-OCR** scaricato:
+3. **Modello OCR** (es. GLM-OCR) scaricato:
    ```bash
    ollama pull glm-ocr:latest
    ```
@@ -62,7 +63,7 @@ pip install -r requirements.txt
 
 2. **Avvia il server web**:
    ```bash
-   python main.py
+   python pd-to-md.py
    ```
 
 3. **Apri il browser**:
@@ -87,7 +88,7 @@ Esempio:
 ```bash
 export VISION_MODEL=llava:latest
 export RENDER_DPI=200
-python main.py
+python pd-to-md.py
 ```
 
 ## API Endpoints
@@ -118,7 +119,7 @@ L'endpoint `/api/ocr/{job_id}/{page}` utilizza Server-Sent Events:
 
 ```
 glm-ocr-webapp/
-├── main.py              # Backend FastAPI
+├── pd-to-md.py          # Backend FastAPI
 ├── requirements.txt     # Dipendenze Python
 ├── static/
 │   ├── index.html      # Frontend HTML
@@ -157,7 +158,7 @@ ollama pull qwen3.5:397b-cloud
 ```
 
 ### Timeout su documenti grandi
-Il timeout è impostato a 10 minuti. Per documenti molto lunghi, puoi aumentare `RENDER_DPI` per qualità migliore o diminuirlo per performance migliori.
+Il timeout e impostato a 10 minuti. Per documenti molto lunghi, puoi aumentare `RENDER_DPI` per qualita migliore o diminuirlo per performance migliori.
 
 ### Caricamento infinito
 Se l'OCR sembra bloccato, verifica:

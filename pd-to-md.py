@@ -53,8 +53,59 @@ JOBS_DIR = BASE_DIR / "jobs"
 STATIC_DIR = BASE_DIR / "static"
 JOBS_DIR.mkdir(exist_ok=True)
 
+# Cached health state (updated by background task)
+_health_state: dict = {
+    "status": "unknown",
+    "ollama_connected": False,
+    "ollama_url": OLLAMA_URL,
+    "glm_ocr_available": False,
+    "vision_model_available": False,
+    "ocr_model": OLLAMA_MODEL,
+    "vision_model": VISION_MODEL,
+}
+
+
+async def _poll_ollama_health() -> None:
+    """Background task that polls Ollama every 10 s and caches the result."""
+    while True:
+        try:
+            timeout = httpx.Timeout(connect=1.0, read=3.0, write=3.0, pool=1.0)
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.get(f"{OLLAMA_URL}/api/tags")
+                if response.status_code == 200:
+                    models = response.json().get("models", [])
+                    model_names = [m.get("name", "") for m in models]
+                    has_glm = any("glm-ocr" in name for name in model_names)
+                    has_vision = VISION_MODEL in model_names
+                    _health_state.update(
+                        {
+                            "status": "healthy",
+                            "ollama_connected": True,
+                            "glm_ocr_available": has_glm,
+                            "vision_model_available": has_vision,
+                        }
+                    )
+                else:
+                    raise RuntimeError("bad status")
+        except Exception:
+            _health_state.update(
+                {
+                    "status": "unhealthy",
+                    "ollama_connected": False,
+                    "glm_ocr_available": False,
+                    "vision_model_available": False,
+                }
+            )
+        await asyncio.sleep(10)
+
+
 # App
-app = FastAPI(title="GLM-OCR WebApp")
+app = FastAPI(title="PDF-to-MD Converter")
+
+
+@app.on_event("startup")
+async def _startup_event() -> None:
+    asyncio.create_task(_poll_ollama_health())
 
 # CORS
 app.add_middleware(
@@ -344,7 +395,7 @@ async def ocr_page(job_id: str, page: int, refresh: bool = False, strategy: str 
 
     Strategies:
     - "auto": Classify page and pick best model (simple=docling, complex=lightonocr)
-    - "ocr": Use glm-ocr only
+    - "ocr": Use OCR model only
     - "vision": Use vision model directly
     - "hybrid": OCR first, then vision refinement (both streamed)
     """
@@ -597,34 +648,8 @@ async def delete_job(job_id: str):
 
 @app.get("/api/health")
 async def health_check():
-    """Check se Ollama è raggiungibile e i modelli disponibili"""
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.get(f"{OLLAMA_URL}/api/tags")
-            if response.status_code == 200:
-                models = response.json().get("models", [])
-                model_names = [m.get("name", "") for m in models]
-                has_glm = any("glm-ocr" in name for name in model_names)
-                has_vision = VISION_MODEL in model_names
-                return {
-                    "status": "healthy",
-                    "ollama_connected": True,
-                    "ollama_url": OLLAMA_URL,
-                    "glm_ocr_available": has_glm,
-                    "vision_model_available": has_vision,
-                    "ocr_model": OLLAMA_MODEL,
-                    "vision_model": VISION_MODEL
-                }
-    except Exception:
-        pass
-
-    return {
-        "status": "unhealthy",
-        "ollama_connected": False,
-        "glm_ocr_available": False,
-        "vision_model_available": False,
-        "ollama_url": OLLAMA_URL
-    }
+    """Return cached Ollama health status (updated every ~10 s by background task)."""
+    return _health_state
 
 
 # =============================================================================
@@ -633,7 +658,7 @@ async def health_check():
 
 @app.get("/")
 async def root():
-    """Serve la webapp HTML"""
+    """Serve la webapp"""
     index_path = STATIC_DIR / "index.html"
     if index_path.exists():
         return FileResponse(index_path, media_type="text/html")
