@@ -43,7 +43,7 @@ Webapp per convertire PDF e immagini in Markdown pulito usando modelli OCR e Vis
 ```bash
 # Clona il repository
 git clone <repo-url>
-cd glm-ocr-webapp
+cd pdf-to-md-converter
 
 # Crea ambiente virtuale (opzionale ma consigliato)
 python -m venv venv
