@@ -1,10 +1,10 @@
 import asyncio
 import base64
+from datetime import datetime
 import json
 import os
 import re
 import shutil
-import uuid
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -298,7 +298,7 @@ async def upload(file: UploadFile = File(...)):
     if suffix not in allowed:
         raise HTTPException(status_code=400, detail=f"unsupported file type: {suffix}")
 
-    job_id = uuid.uuid4().hex[:12]
+    job_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     job_dir = JOBS_DIR / job_id
     job_dir.mkdir()
     src_path = job_dir / f"source{suffix}"
