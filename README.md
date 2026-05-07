@@ -5,7 +5,7 @@ Webapp per convertire PDF e immagini in Markdown pulito usando modelli OCR e Vis
 ## Caratteristiche
 
 - **Multi-formato**: Supporta PDF, PNG, JPG, JPEG, TIFF, BMP, WEBP
-- **Strategie multiple**: Scegli tra Auto, Vision, OCR o Hybrid
+- **Strategie multiple**: Scegli tra Auto o Vision
 - **Streaming OCR**: Risultati in tempo reale mentre il modello elabora
 - **Vista affiancata**: Documento originale a sinistra, Markdown a destra
 - **Navigazione pagine**: Thumbnail per navigare tra le pagine
@@ -161,7 +161,7 @@ Il timeout e impostato a 10 minuti. Per documenti molto lunghi, puoi aumentare `
 Se l'OCR sembra bloccato, verifica:
 1. Che Ollama sia in esecuzione: `ollama list`
 2. Che il modello sia disponibile: controlla `/api/health`
-3. Prova la strategia "vision" invece di "hybrid" per testare
+3. Prova la strategia "auto" invece di "vision" per testare
 
 ## Licenza
 
