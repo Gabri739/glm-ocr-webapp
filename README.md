@@ -16,26 +16,20 @@ Webapp per convertire PDF e immagini in Markdown pulito usando modelli OCR e Vis
 
 | Strategia | Descrizione | Quando usarla |
 |-----------|-------------|---------------|
-| **Auto** (default) | Sceglie automaticamente il modello migliore per ogni pagina | Massima qualita senza pensarci |
+| **Auto** (default) | Usa LightOnOCR per massima qualita | Massima qualita senza pensarci |
 | **Vision** | Usa direttamente il modello vision sull'immagine | Veloce, una sola chiamata |
-| **OCR** | Usa solo il modello OCR | Testo stampato chiaro, massima velocita |
-| **Hybrid** | Prima passata OCR, poi correzione Vision | Documenti complessi (tabelle, formule) |
 
 ## Requisiti
 
 1. **Python 3.10+**
 2. **Ollama** installato e in esecuzione
-3. **Modello OCR** (es. GLM-OCR) scaricato:
-   ```bash
-   ollama pull glm-ocr:latest
-   ```
-4. **Modello Vision** (opzionale, per strategia hybrid/vision):
-   ```bash
-   ollama pull qwen3.5:397b-cloud
-   ```
-5. **Modello Auto** (opzionale, per strategia auto):
+3. **Modello LightOnOCR** (per strategia Auto):
    ```bash
    ollama pull Maternion/LightOnOCR-2:latest
+   ```
+4. **Modello Vision** (per strategia Vision):
+   ```bash
+   ollama pull qwen3.5:397b-cloud
    ```
 
 ## Installazione
@@ -82,11 +76,8 @@ Variabili d'ambiente opzionali:
 | Variabile | Default | Descrizione |
 |-----------|---------|-------------|
 | `OLLAMA_URL` | `http://localhost:11434` | URL del server Ollama |
-| `OLLAMA_MODEL` | `glm-ocr:latest` | Modello OCR |
-| `VISION_MODEL` | `qwen3.5:397b-cloud` | Modello Vision (hybrid/vision) |
-| `COMPLEX_MODEL` | `Maternion/LightOnOCR-2:latest` | Modello Auto (strategia auto) |
-| `OCR_PROMPT` | *(vedi codice)* | Prompt per l'OCR |
-| `VISION_PROMPT` | *(vedi codice)* | Prompt per la correzione Vision |
+| `VISION_MODEL` | `qwen3.5:397b-cloud` | Modello Vision |
+| `COMPLEX_MODEL` | `Maternion/LightOnOCR-2:latest` | Modello Auto (LightOnOCR) |
 | `RENDER_DPI` | `150` | DPI per rendering PDF |
 
 Esempio:
@@ -103,7 +94,8 @@ python pd-to-md.py
 | `POST` | `/api/upload` | Carica PDF/immagine, restituisce job_id |
 | `GET` | `/api/page/{job_id}/{page}` | Ottieni immagine pagina |
 | `GET` | `/api/ocr/{job_id}/{page}` | Avvia OCR (streaming SSE) |
-| `GET` | `/api/ocr/{job_id}/{page}?strategy=vision` | OCR con strategia |
+| `GET` | `/api/ocr/{job_id}/{page}?strategy=auto` | OCR con strategia Auto |
+| `GET` | `/api/ocr/{job_id}/{page}?strategy=vision` | OCR con strategia Vision |
 | `GET` | `/api/markdown/{job_id}` | Scarica tutto il markdown |
 | `GET` | `/api/health` | Stato connessione Ollama e modelli |
 | `DELETE` | `/api/jobs/{job_id}` | Elimina job |
@@ -158,9 +150,8 @@ ollama serve
 ### Modello non trovato
 ```bash
 # Scarica i modelli necessari
-ollama pull glm-ocr:latest
-ollama pull qwen3.5:397b-cloud
 ollama pull Maternion/LightOnOCR-2:latest
+ollama pull qwen3.5:397b-cloud
 ```
 
 ### Timeout su documenti grandi

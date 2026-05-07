@@ -10,7 +10,6 @@ from pathlib import Path
 
 import fitz  # PyMuPDF
 import httpx
-import numpy as np
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -21,7 +20,7 @@ from PIL import Image
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "glm-ocr:latest")
 VISION_MODEL = os.environ.get("VISION_MODEL", "qwen3.5:397b-cloud")
-SIMPLE_MODEL = os.environ.get("SIMPLE_MODEL", "ibm/granite-docling:latest")
+
 COMPLEX_MODEL = os.environ.get("COMPLEX_MODEL", "Maternion/LightOnOCR-2:latest")
 OCR_PROMPT = os.environ.get(
     "OCR_PROMPT",
@@ -37,11 +36,11 @@ OCR_PROMPT = os.environ.get(
 )
 VISION_PROMPT = os.environ.get(
     "VISION_PROMPT",
-    "The following is OCR text extracted from the image above. Review the image and the extracted text, "
-    "then produce a corrected, complete version. Fix any errors, fill in missing content (especially tables, "
-    "formulas, and figures), and ensure proper Markdown formatting. "
+    "Analyze this document image and extract ALL content into clean, well-formatted Markdown. "
+    "Preserve headings, paragraphs, lists, and tables with proper formatting. "
     "For tables, ALWAYS use Markdown table syntax with pipes (|) and dashes (-), NEVER HTML tags. "
-    "Output only the corrected Markdown."
+    "Describe figures concisely in italics. "
+    "Output ONLY the final Markdown content without any introductory text."
 )
 
 
@@ -149,56 +148,6 @@ def _save_image_as_page(src: Path, out_dir: Path) -> int:
         im = im.convert("RGB")
         im.save(out_dir / "page-0001.png", format="PNG")
     return 1
-
-
-def _classify_page(img_path: Path) -> str:
-    """Classifica la pagina come 'simple' o 'complex' basandosi sull'analisi visiva.
-
-    Usa edge detection per rilevare tabelle e layout strutturati.
-    """
-    with Image.open(img_path) as im:
-        # Riduci per velocita
-        small = im.convert("L").resize((512, 512), Image.Resampling.LANCZOS)
-        arr = np.array(small, dtype=np.float32)
-
-        # Calcola densita del testo (pixel scuri)
-        mean = np.mean(arr)
-        binary = arr < (mean * 0.80)
-        density = np.sum(binary) / binary.size
-
-        # Pagina quasi vuota → simple
-        if density < 0.02:
-            return "simple"
-
-        # EDGE DETECTION: calcola differenze assolute tra pixel adiacenti
-        h_diff = np.abs(np.diff(arr, axis=0))  # shape (511, 512)
-        v_diff = np.abs(np.diff(arr, axis=1))  # shape (512, 511)
-
-        edge_threshold = 40.0
-        h_edges = h_diff > edge_threshold
-        v_edges = v_diff > edge_threshold
-
-        # Conta righe/colonne con molti bordi (linee strutturali)
-        # Usiamo una soglia piu alta (20% di copertura) per evitare falsi positivi dai caratteri
-        h_edge_per_row = np.sum(h_edges, axis=1)
-        strong_h_lines = int(np.sum(h_edge_per_row > h_edges.shape[1] * 0.20))
-
-        v_edge_per_col = np.sum(v_edges, axis=0)
-        strong_v_lines = int(np.sum(v_edge_per_col > v_edges.shape[0] * 0.20))
-
-        # Tabelle hanno molte linee verticali (colonne) e orizzontali (righe)
-        # Le pagine di testo hanno pochissime linee verticali
-        has_table_structure = (strong_v_lines >= 10) or (strong_h_lines >= 100 and strong_v_lines >= 3)
-
-        # Layout molto denso → complex
-        total_h_edges = int(np.sum(h_edges))
-        total_v_edges = int(np.sum(v_edges))
-        very_dense = total_h_edges > 40000 and total_v_edges > 40000 and density > 0.12
-
-        if has_table_structure or very_dense:
-            return "complex"
-
-        return "simple"
 
 
 def _html_tables_to_md(text: str) -> str:
@@ -394,10 +343,8 @@ async def ocr_page(job_id: str, page: int, refresh: bool = False, strategy: str 
     """Run OCR with selected strategy and stream incremental Markdown chunks.
 
     Strategies:
-    - "auto": Classify page and pick best model (simple=docling, complex=lightonocr)
-    - "ocr": Use OCR model only
+    - "auto": Use LightOnOCR model (best quality)
     - "vision": Use vision model directly
-    - "hybrid": OCR first, then vision refinement (both streamed)
     """
     job_dir = _job_dir(job_id)
     img_path = job_dir / f"page-{page:04d}.png"
@@ -422,17 +369,11 @@ async def ocr_page(job_id: str, page: int, refresh: bool = False, strategy: str 
         final_text = ""
         html_buffer = ""
 
-        # Determine model for auto strategy — always use LightOnOCR for best quality
-        selected_model = None
-        page_type = None
         if strategy == "auto":
-            selected_model = COMPLEX_MODEL
-            yield f"event: stage\ndata: {json.dumps({'stage': 'auto', 'message': 'Auto-routing: LightOnOCR'})}\n\n"
-
-        if strategy == "auto" or strategy == "ocr":
-            yield f"event: stage\ndata: {json.dumps({'stage': 'ocr', 'message': 'Running OCR...'})}\n\n"
+            # Use LightOnOCR directly
+            yield f"event: stage\ndata: {json.dumps({'stage': 'auto', 'message': 'Using LightOnOCR...'})}\n\n"
             ocr_payload = {
-                "model": selected_model if strategy == "auto" else OLLAMA_MODEL,
+                "model": COMPLEX_MODEL,
                 "prompt": OCR_PROMPT,
                 "images": [img_b64],
                 "stream": True,
@@ -507,99 +448,8 @@ async def ocr_page(job_id: str, page: int, refresh: bool = False, strategy: str 
             except asyncio.CancelledError:
                 raise
 
-        elif strategy == "hybrid":
-            # Passata 1: OCR (STREAMED)
-            yield f"event: stage\ndata: {json.dumps({'stage': 'ocr', 'message': 'Running OCR...'})}\n\n"
-            first_pass_text = ""
-            ocr_payload = {
-                "model": OLLAMA_MODEL,
-                "prompt": OCR_PROMPT,
-                "images": [img_b64],
-                "stream": True,
-                "options": {"temperature": 0.0, "num_predict": 16384},
-            }
-            try:
-                async with httpx.AsyncClient(timeout=timeout) as client:
-                    async with client.stream("POST", f"{OLLAMA_URL}/api/generate", json=ocr_payload) as resp:
-                        if resp.status_code != 200:
-                            body = (await resp.aread()).decode("utf-8", errors="replace")
-                            err = {"error": f"OCR HTTP {resp.status_code}", "body": body[:500]}
-                            yield f"event: error\ndata: {json.dumps(err)}\n\n"
-                            return
-                        async for line in resp.aiter_lines():
-                            if not line:
-                                continue
-                            try:
-                                obj = json.loads(line)
-                            except json.JSONDecodeError:
-                                continue
-                            chunk = obj.get("response", "")
-                            if chunk:
-                                first_pass_text += chunk
-                                html_buffer += chunk
-                                to_send, html_buffer = _flush_html_buffer(html_buffer)
-                                if to_send:
-                                    yield f"data: {json.dumps({'chunk': to_send})}\n\n"
-                            if obj.get("done"):
-                                break
-            except httpx.RequestError as e:
-                yield f"event: error\ndata: {json.dumps({'error': f'OCR connection error: {str(e)}'})}\n\n"
-                return
-            except asyncio.CancelledError:
-                raise
-
-            # Flush any remaining HTML buffer from pass 1
-            if html_buffer:
-                converted = _html_tables_to_md(html_buffer)
-                yield f"data: {json.dumps({'chunk': converted})}\n\n"
-                html_buffer = ""
-
-            if not first_pass_text.strip():
-                yield f"event: error\ndata: {json.dumps({'error': 'OCR produced no text'})}\n\n"
-                return
-
-            # Passata 2: Vision refinement (STREAMED)
-            yield f"event: stage\ndata: {json.dumps({'stage': 'vision', 'message': 'Refining with vision model...'})}\n\n"
-            vision_prompt = f"{VISION_PROMPT}\n\n--- EXTRACTED TEXT ---\n{first_pass_text}\n--- END ---"
-            vision_payload = {
-                "model": VISION_MODEL,
-                "prompt": vision_prompt,
-                "images": [img_b64],
-                "stream": True,
-                "options": {"temperature": 0.1, "num_predict": 16384},
-            }
-            try:
-                async with httpx.AsyncClient(timeout=timeout) as client:
-                    async with client.stream("POST", f"{OLLAMA_URL}/api/generate", json=vision_payload) as resp:
-                        if resp.status_code != 200:
-                            body = (await resp.aread()).decode("utf-8", errors="replace")
-                            err = {"error": f"Vision HTTP {resp.status_code}", "body": body[:500]}
-                            yield f"event: error\ndata: {json.dumps(err)}\n\n"
-                            return
-                        async for line in resp.aiter_lines():
-                            if not line:
-                                continue
-                            try:
-                                obj = json.loads(line)
-                            except json.JSONDecodeError:
-                                continue
-                            chunk = obj.get("response", "")
-                            if chunk:
-                                html_buffer += chunk
-                                to_send, html_buffer = _flush_html_buffer(html_buffer)
-                                if to_send:
-                                    final_text += to_send
-                                    yield f"data: {json.dumps({'chunk': to_send})}\n\n"
-                            if obj.get("done"):
-                                break
-            except httpx.RequestError as e:
-                yield f"event: error\ndata: {json.dumps({'error': f'Vision connection error: {str(e)}'})}\n\n"
-                return
-            except asyncio.CancelledError:
-                raise
-
         else:
-            yield f"event: error\ndata: {json.dumps({'error': f'Invalid strategy: {strategy}. Use: auto, ocr, vision, hybrid'})}\n\n"
+            yield f"event: error\ndata: {json.dumps({'error': f'Invalid strategy: {strategy}. Use: auto or vision'})}\n\n"
             return
 
         # Flush any remaining HTML buffer

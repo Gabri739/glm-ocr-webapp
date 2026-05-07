@@ -24,7 +24,6 @@ const elements = {
     downloadBtn: document.getElementById('downloadBtn'),
     clearBtn: document.getElementById('clearBtn'),
     statusBadge: document.getElementById('statusBadge'),
-    settingsBtn: document.getElementById('settingsBtn'),
     strategySelect: document.getElementById('strategySelect'),
 
     uploadScreen: document.getElementById('uploadScreen'),
@@ -46,21 +45,17 @@ const elements = {
     copyBtn: document.getElementById('copyBtn'),
     processPageBtn: document.getElementById('processPageBtn'),
 
-    settingsModal: document.getElementById('settingsModal'),
-    closeSettingsBtn: document.getElementById('closeSettingsBtn'),
-    promptEditor: document.getElementById('promptEditor'),
-    savePromptBtn: document.getElementById('savePromptBtn'),
-    resetPromptBtn: document.getElementById('resetPromptBtn'),
-
     progressBar: document.getElementById('progressBar'),
     loadingOverlay: document.getElementById('loadingOverlay'),
-    loadingText: document.getElementById('loadingText')
+    loadingText: document.getElementById('loadingText'),
+    visionWarning: document.getElementById('visionWarning')
 };
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
     setupEventListeners();
     checkHealth();
+    updateVisionWarning();
     setInterval(checkHealth, 30000);
 });
 
@@ -91,22 +86,10 @@ function setupEventListeners() {
     elements.downloadBtn.addEventListener('click', downloadMarkdown);
     elements.clearBtn.addEventListener('click', clearAll);
 
-    // Settings Modal
-    elements.settingsBtn.addEventListener('click', () => {
-        elements.settingsModal.style.display = 'flex';
-    });
-    elements.closeSettingsBtn.addEventListener('click', () => {
-        elements.settingsModal.style.display = 'none';
-    });
-    elements.settingsModal.addEventListener('click', (e) => {
-        if (e.target === elements.settingsModal) {
-            elements.settingsModal.style.display = 'none';
-        }
-    });
-
     // Strategy selector
     elements.strategySelect?.addEventListener('change', () => {
         checkHealth();
+        updateVisionWarning();
     });
 
     // Keyboard
@@ -327,6 +310,9 @@ function updateOCRStatus(status, error = '') {
                 <div class="loading-spinner" style="width: 16px; height: 16px; border-width: 2px;"></div>
                 <span class="status-text">Elaborazione in corso...</span>
             `;
+            // Clear any previous content while processing
+            elements.markdownBody.innerHTML = '';
+            elements.rawEditor.value = '';
             break;
         case 'completed':
             statusEl.className += ' completed';
@@ -376,7 +362,6 @@ async function processPage(pageNum, forceRefresh = false) {
                 const data = JSON.parse(event.data);
                 if (data.chunk) {
                     markdown += data.chunk;
-                    // Update display in real-time
                     state.results[pageNum] = { status: 'processing', markdown, error: '' };
                     if (pageNum === state.currentPage) {
                         if (state.isRawView) {
@@ -405,7 +390,7 @@ async function processPage(pageNum, forceRefresh = false) {
                     }
                 }
                 if (data.stage === 'vision') {
-                    // Show overlay while vision model is processing; keep OCR text visible underneath
+                    // Show overlay while vision model is processing
                     if (pageNum === state.currentPage && elements.visionOverlay) {
                         elements.visionOverlay.style.display = 'flex';
                     }
@@ -605,6 +590,14 @@ async function clearAll() {
     showUploadView();
 }
 
+// Vision Warning Update
+function updateVisionWarning() {
+    const strategy = elements.strategySelect?.value || 'auto';
+    if (elements.visionWarning) {
+        elements.visionWarning.style.display = strategy === 'vision' ? 'block' : 'none';
+    }
+}
+
 // Health Check
 async function checkHealth() {
     try {
@@ -617,7 +610,8 @@ async function checkHealth() {
         if (data.ollama_connected && data.glm_ocr_available) {
             badge.className = 'status-badge healthy';
             const strategy = elements.strategySelect?.value || 'vision';
-            text.textContent = `Ollama (${strategy})`;
+            const modeLabel = strategy === 'auto' ? 'local' : 'cloud';
+            text.textContent = `Ollama (${modeLabel})`;
         } else if (data.ollama_connected) {
             badge.className = 'status-badge warning';
             text.textContent = 'GLM-OCR non trovato';
@@ -636,10 +630,6 @@ async function checkHealth() {
 // Keyboard
 function handleKeyboard(e) {
     if (e.key === 'Escape') {
-        if (elements.settingsModal.style.display === 'flex') {
-            elements.settingsModal.style.display = 'none';
-            return;
-        }
         if (state.jobId) {
             clearAll();
             return;
