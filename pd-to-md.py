@@ -19,7 +19,7 @@ from PIL import Image
 # Configurazione
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "glm-ocr:latest")
-VISION_MODEL = os.environ.get("VISION_MODEL", "qwen3.5:397b-cloud")
+VISION_MODEL = os.environ.get("VISION_MODEL", "gemma4:31b-cloud")
 
 COMPLEX_MODEL = os.environ.get("COMPLEX_MODEL", "Maternion/LightOnOCR-2:latest")
 OCR_PROMPT = os.environ.get(
